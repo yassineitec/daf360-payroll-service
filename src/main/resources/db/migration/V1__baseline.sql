@@ -1,0 +1,4 @@
+-- V1__baseline.sql
+-- Baseline marker — schema created externally via SSMS/DBA scripts.
+-- Flyway baseline-on-migrate=true means this migration is never executed.
+-- All subsequent migrations (V2+) contain the actual DDL.
