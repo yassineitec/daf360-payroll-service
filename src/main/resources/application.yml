@@ -72,6 +72,11 @@ app:
   jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:}
   allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8080,http://localhost:4205,http://localhost:4200}
   hr-api-base-url: ${HR_API_BASE_URL:http://localhost:8888}
+  # ProfileSyncService reads `app.rh-service-url` via @Value, NOT hr-api-base-url.
+  # It was never declared here, so it always fell back to the @Value default
+  # (localhost:8888) and HR_API_BASE_URL had no effect. Both now resolve from the
+  # same env var so one setting drives every HR call.
+  rh-service-url: ${HR_API_BASE_URL:http://localhost:8888}
   mail-enabled: ${MAIL_ENABLED:false}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
   # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD
