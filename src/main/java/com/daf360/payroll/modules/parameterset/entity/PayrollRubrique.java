@@ -32,7 +32,7 @@ public class PayrollRubrique {
     private String nature;  // AVANTAGE|INDEMNITE|PRIME|RETENUE
 
     @Column(name = "calc_mode", nullable = false, length = 30)
-    private String calcMode;  // FIXE_MENSUEL|FIXE_JOURNALIER|POURCENTAGE_BRUT|POURCENTAGE_CHARGES
+    private String calcMode;  // FIXE_MENSUEL|FIXE_JOURNALIER|POURCENTAGE_BRUT|POURCENTAGE_CHARGES|POURCENTAGE_PLAFONNE
 
     @Column(name = "amount", precision = 18, scale = 4)
     private BigDecimal amount;
