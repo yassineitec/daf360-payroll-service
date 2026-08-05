@@ -208,6 +208,13 @@ public class PayrollSimulatorService {
                     r.getRate() != null
                             ? totalBaseCharges.multiply(r.getRate()).setScale(SCALE, RoundingMode.HALF_UP)
                             : BigDecimal.ZERO;
+            case "POURCENTAGE_PLAFONNE" -> {
+                if (r.getRate() == null) yield BigDecimal.ZERO;
+                BigDecimal effectiveBase = (r.getCapAmount() != null)
+                        ? gross.min(r.getCapAmount())
+                        : gross;
+                yield effectiveBase.multiply(r.getRate()).setScale(SCALE, RoundingMode.HALF_UP);
+            }
             default -> BigDecimal.ZERO;
         };
     }
