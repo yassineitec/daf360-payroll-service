@@ -1,5 +1,6 @@
 package com.daf360.payroll.modules.parameterset.service;
 
+import com.daf360.payroll.modules.calibration.event.ParameterSetActivatedEvent;
 import com.daf360.payroll.modules.parameterset.dto.*;
 import com.daf360.payroll.modules.parameterset.entity.BenefitCatalogue;
 import com.daf360.payroll.modules.parameterset.entity.ParameterSet;
@@ -9,6 +10,7 @@ import com.daf360.payroll.modules.parameterset.repository.BenefitCatalogueReposi
 import com.daf360.payroll.modules.parameterset.repository.ParameterSetRepository;
 import com.daf360.payroll.modules.parameterset.repository.PayrollRubriqueRepository;
 import com.daf360.payroll.modules.parameterset.repository.SocialChargeRateRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,19 +22,22 @@ import java.util.NoSuchElementException;
 @Service
 public class ParameterSetService {
 
-    private final ParameterSetRepository paramSetRepo;
+    private final ParameterSetRepository    paramSetRepo;
     private final SocialChargeRateRepository rateRepo;
     private final BenefitCatalogueRepository benefitRepo;
-    private final PayrollRubriqueRepository rubriqueRepo;
+    private final PayrollRubriqueRepository  rubriqueRepo;
+    private final ApplicationEventPublisher  eventPublisher;
 
     public ParameterSetService(ParameterSetRepository paramSetRepo,
                                 SocialChargeRateRepository rateRepo,
                                 BenefitCatalogueRepository benefitRepo,
-                                PayrollRubriqueRepository rubriqueRepo) {
-        this.paramSetRepo = paramSetRepo;
-        this.rateRepo = rateRepo;
-        this.benefitRepo = benefitRepo;
-        this.rubriqueRepo = rubriqueRepo;
+                                PayrollRubriqueRepository rubriqueRepo,
+                                ApplicationEventPublisher eventPublisher) {
+        this.paramSetRepo   = paramSetRepo;
+        this.rateRepo       = rateRepo;
+        this.benefitRepo    = benefitRepo;
+        this.rubriqueRepo   = rubriqueRepo;
+        this.eventPublisher = eventPublisher;
     }
 
     public List<ParameterSetDto> listByPays(Long paysId) {
@@ -136,6 +141,9 @@ public class ParameterSetService {
         ps.setPreviousVersionId(
                 paramSetRepo.findFirstByPaysIdAndStatusOrderByVersionDesc(ps.getPaysId(), "ARCHIVED")
                         .map(ParameterSet::getId).orElse(null));
+
+        // Trigger F.04 + F.07 finance output generation after this transaction commits.
+        eventPublisher.publishEvent(new ParameterSetActivatedEvent(ps));
     }
 
     // -----------------------------------------------------------------------
@@ -212,6 +220,7 @@ public class ParameterSetService {
             r.setCalcMode(d.calcMode());
             r.setAmount(d.amount());
             r.setRate(d.rate());
+            r.setCapAmount(d.capAmount());
             r.setEmployerSharePct(d.employerSharePct() != null ? d.employerSharePct() : BigDecimal.ZERO);
             r.setEmployeeSharePct(d.employeeSharePct() != null ? d.employeeSharePct() : BigDecimal.ZERO);
             r.setIsSubjectToSocialCharges(d.isSubjectToSocialCharges() != null ? d.isSubjectToSocialCharges() : false);
@@ -254,7 +263,8 @@ public class ParameterSetService {
         List<PayrollRubriqueDto> rubriques = rubriqueRepo.findByParameterSetId(ps.getId()).stream()
                 .map(r -> new PayrollRubriqueDto(r.getId(), r.getCode(),
                         r.getLabelFr(), r.getLabelEn(), r.getNature(), r.getCalcMode(),
-                        r.getAmount(), r.getRate(), r.getEmployerSharePct(), r.getEmployeeSharePct(),
+                        r.getAmount(), r.getRate(), r.getCapAmount(),
+                        r.getEmployerSharePct(), r.getEmployeeSharePct(),
                         r.getIsSubjectToSocialCharges(), r.getIsSubjectToIrpp(),
                         r.getDirection(), r.getContractTypes(), r.getIsActive(), r.getCreatedAt()))
                 .toList();

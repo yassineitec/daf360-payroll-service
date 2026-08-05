@@ -12,6 +12,7 @@ public record PayrollRubriqueDto(
         String calcMode,
         BigDecimal amount,
         BigDecimal rate,
+        BigDecimal capAmount,
         BigDecimal employerSharePct,
         BigDecimal employeeSharePct,
         Boolean isSubjectToSocialCharges,
