@@ -40,6 +40,9 @@ public class PayrollRubrique {
     @Column(name = "rate", precision = 10, scale = 6)
     private BigDecimal rate;
 
+    @Column(name = "cap_amount", precision = 18, scale = 4)
+    private BigDecimal capAmount;
+
     @Column(name = "employer_share_pct", nullable = false, precision = 10, scale = 6)
     private BigDecimal employerSharePct = BigDecimal.ZERO;
 
