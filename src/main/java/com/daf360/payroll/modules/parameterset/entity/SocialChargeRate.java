@@ -38,4 +38,30 @@ public class SocialChargeRate {
 
     @Column(name = "cap_amount")
     private BigDecimal capAmount;
+
+    // ── Formula support (V19) ──────────────────────────────────────────────────
+
+    /**
+     * Arithmetic expression for the employee-side charge amount (optional).
+     * When set, overrides the standard {@code employee_rate × base} computation.
+     * Available variables: {@code BRUT}, results of prior charges ({@code {CODE}_EE}, {@code {CODE}_ER}).
+     * Example: {@code "BRUT * 0.0918"} or {@code "(BRUT - PRIME) * 0.05"}.
+     */
+    @Column(name = "formula_ee", length = 1000)
+    private String formulaEe;
+
+    /**
+     * Arithmetic expression for the employer-side charge amount (optional).
+     * Same variable context as {@link #formulaEe}.
+     */
+    @Column(name = "formula_er", length = 1000)
+    private String formulaEr;
+
+    /**
+     * Evaluation order within a parameter set; lower = evaluated first.
+     * A formula charge with {@code eval_order=20} can reference results of charges
+     * with {@code eval_order=10} via their {@code {CODE}_EE} / {@code {CODE}_ER} variables.
+     */
+    @Column(name = "eval_order", nullable = false)
+    private Integer evalOrder = 0;
 }

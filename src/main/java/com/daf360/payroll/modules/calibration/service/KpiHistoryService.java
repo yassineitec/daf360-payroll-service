@@ -15,13 +15,16 @@ import java.util.List;
 
 /**
  * D3-258: tracks the precision KPI per country/period and raises an alert flag
- * when the precision has been below threshold for 3 or more consecutive months.
+ * when the precision has been below 95% for 2 or more consecutive months
+ * (spec H.10 §4.3: target ≥98% from month 3, alert threshold = 95% / 2 months).
  */
 @Service
 public class KpiHistoryService {
 
-    private static final BigDecimal DEFAULT_THRESHOLD     = new BigDecimal("99.00");
-    private static final int        ALERT_CONSECUTIVE_MONTHS = 3;
+    /** Alert fires when precision drops below this value (spec §4.3). */
+    private static final BigDecimal DEFAULT_THRESHOLD     = new BigDecimal("95.00");
+    /** Number of consecutive months below threshold before alertSent is set (spec §4.3). */
+    private static final int        ALERT_CONSECUTIVE_MONTHS = 2;
 
     private final PrecisionKpiHistoryRepository kpiRepo;
     private final CalibrationImportRepository importRepo;

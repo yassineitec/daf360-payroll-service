@@ -41,6 +41,14 @@ public class FxSnapshotService {
                 .orElse(null);
     }
 
+    /** Rate: how many CHF one local unit is worth (e.g. 1 TND = 0.316 CHF). */
+    public BigDecimal chfRate(Long paysId) {
+        return Optional.ofNullable(appProperties.getFxRates())
+                .map(m -> m.get(String.valueOf(paysId)))
+                .map(AppProperties.FxRateEntry::getChf)
+                .orElse(null);
+    }
+
     public BigDecimal convertToEur(BigDecimal localAmount, Long paysId) {
         BigDecimal rate = eurRate(paysId);
         if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) return null;
@@ -49,6 +57,12 @@ public class FxSnapshotService {
 
     public BigDecimal convertToUsd(BigDecimal localAmount, Long paysId) {
         BigDecimal rate = usdRate(paysId);
+        if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) return null;
+        return localAmount.multiply(rate).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    public BigDecimal convertToChf(BigDecimal localAmount, Long paysId) {
+        BigDecimal rate = chfRate(paysId);
         if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) return null;
         return localAmount.multiply(rate).setScale(4, RoundingMode.HALF_UP);
     }

@@ -1,6 +1,7 @@
 package com.daf360.payroll.web;
 
 import com.daf360.payroll.engine.ConvergenceException;
+import com.daf360.payroll.engine.CyclicDependencyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
@@ -9,6 +10,14 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(CyclicDependencyException.class)
+    public ProblemDetail handleCyclicDependency(CyclicDependencyException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(422);
+        pd.setDetail(ex.getMessage());
+        pd.setProperty("cycleCodes", ex.getCycleCodes());
+        return pd;
+    }
 
     @ExceptionHandler(ConvergenceException.class)
     public ProblemDetail handleConvergence(ConvergenceException ex) {

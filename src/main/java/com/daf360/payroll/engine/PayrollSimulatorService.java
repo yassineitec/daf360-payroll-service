@@ -18,22 +18,36 @@ import java.util.List;
  *   computeFromGross  — straightforward top-down for verification / budgeting
  *   computeFromNet    — uses ConvergenceEngine to invert gross→net, then top-down
  *
- * PayrollRubriques (CREDIT/DEBIT) layer on top of the legacy BenefitCatalogue.
- * joursTravailes is required for FIXE_JOURNALIER rubriques (standard month = 22 days).
+ * <h3>Computation engine</h3>
+ * All social charge lines and payroll rubriques are evaluated by {@link TopologicalEvaluator},
+ * which resolves them in topological dependency order and supports:
+ * <ul>
+ *   <li>Charge formulas that reference BRUT or results of prior charge lines</li>
+ *   <li>Rubrique formulas that reference BRUT, any charge result, the aggregate
+ *       CHARGES_EE/CHARGES_ER, and results of prior rubriques</li>
+ *   <li>Automatic cycle detection — throws {@link CyclicDependencyException} if a
+ *       dependency loop is present</li>
+ * </ul>
+ *
+ * <h3>Backward compatibility</h3>
+ * Existing rate-based charges (no formula set) and all legacy BenefitCatalogue rows
+ * continue to work unchanged.
  */
 @Service
 public class PayrollSimulatorService {
 
     private static final int SCALE = 4;
-    private static final int STANDARD_WORKING_DAYS = 22;
 
     private final IrppCalculatorService irppCalculator;
     private final ConvergenceEngine convergenceEngine;
+    private final TopologicalEvaluator topologicalEvaluator;
 
     public PayrollSimulatorService(IrppCalculatorService irppCalculator,
-                                   ConvergenceEngine convergenceEngine) {
-        this.irppCalculator = irppCalculator;
-        this.convergenceEngine = convergenceEngine;
+                                   ConvergenceEngine convergenceEngine,
+                                   TopologicalEvaluator topologicalEvaluator) {
+        this.irppCalculator      = irppCalculator;
+        this.convergenceEngine   = convergenceEngine;
+        this.topologicalEvaluator = topologicalEvaluator;
     }
 
     // -----------------------------------------------------------------------
@@ -99,23 +113,24 @@ public class PayrollSimulatorService {
                                    int iterations,
                                    boolean convergenceOk) {
 
-        // Base charges on gross (used for POURCENTAGE_CHARGES mode)
-        BigDecimal baseEmployeeCharges = computeCharges(gross, rates, contractType, true);
-        BigDecimal baseEmployerCharges = computeCharges(gross, rates, contractType, false);
-        BigDecimal totalBaseCharges = baseEmployeeCharges.add(baseEmployerCharges);
+        // Evaluate all charges + rubriques in topological dependency order
+        TopologicalEvaluator.EvaluationResult eval =
+                topologicalEvaluator.evaluate(gross, rates, contractType, rubriques, joursTravailes);
 
-        // Filter and accumulate rubrique contributions
-        List<PayrollRubrique> applicable = filterRubriques(rubriques, contractType);
+        BigDecimal employeeCharges = eval.totalChargesEE();
+        BigDecimal employerCharges = eval.totalChargesER();
 
-        BigDecimal taxableCredit      = BigDecimal.ZERO;  // CREDIT, subject to IRPP → enters taxable base
-        BigDecimal nonTaxableCredit   = BigDecimal.ZERO;  // CREDIT, exempt from IRPP → added to net
-        BigDecimal totalDebit         = BigDecimal.ZERO;  // DEBIT → subtracted from net
-        BigDecimal employerShareTotal = BigDecimal.ZERO;  // employer part of rubrique (goes into loaded cost)
-        BigDecimal employeeShareTotal = BigDecimal.ZERO;  // employee part of rubrique (deducted from net)
-        BigDecimal socialChargeAdj    = BigDecimal.ZERO;  // rubriques that widen the social charge base
+        BigDecimal taxableCredit      = BigDecimal.ZERO;
+        BigDecimal nonTaxableCredit   = BigDecimal.ZERO;
+        BigDecimal totalDebit         = BigDecimal.ZERO;
+        BigDecimal employerShareTotal = BigDecimal.ZERO;
+        BigDecimal employeeShareTotal = BigDecimal.ZERO;
+        BigDecimal socialChargeAdj    = BigDecimal.ZERO;
 
-        for (PayrollRubrique r : applicable) {
-            BigDecimal amt = computeRubriqueAmount(r, gross, totalBaseCharges, joursTravailes);
+        for (TopologicalEvaluator.EvaluatedRubrique er : eval.evaluatedRubriques()) {
+            PayrollRubrique r   = er.rubrique();
+            BigDecimal     amt  = er.amount();
+
             if ("CREDIT".equals(r.getDirection())) {
                 if (Boolean.TRUE.equals(r.getIsSubjectToIrpp())) {
                     taxableCredit = taxableCredit.add(amt);
@@ -135,15 +150,12 @@ public class PayrollSimulatorService {
         }
 
         // Recalculate charges if any rubrique widens the social charge base
-        BigDecimal employeeCharges;
-        BigDecimal employerCharges;
         if (socialChargeAdj.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal adjustedBase = gross.add(socialChargeAdj);
-            employeeCharges = computeCharges(adjustedBase, rates, contractType, true);
-            employerCharges = computeCharges(adjustedBase, rates, contractType, false);
-        } else {
-            employeeCharges = baseEmployeeCharges;
-            employerCharges = baseEmployerCharges;
+            TopologicalEvaluator.EvaluationResult adjusted =
+                    topologicalEvaluator.evaluate(adjustedBase, rates, contractType, List.of(), joursTravailes);
+            employeeCharges = adjusted.totalChargesEE();
+            employerCharges = adjusted.totalChargesER();
         }
 
         // Legacy BenefitCatalogue (backward compatibility)
@@ -180,76 +192,8 @@ public class PayrollSimulatorService {
                 netInHand, netTaxable, taxableBase, gross, loadedCost,
                 irpp, employeeCharges, employerCharges,
                 taxableCredit.add(nonTaxableCredit), totalDebit, employerShareTotal,
-                iterations, convergenceOk);
-    }
-
-    // -----------------------------------------------------------------------
-    //  Rubrique helpers
-    // -----------------------------------------------------------------------
-
-    private BigDecimal computeRubriqueAmount(PayrollRubrique r,
-                                              BigDecimal gross,
-                                              BigDecimal totalBaseCharges,
-                                              int joursTravailes) {
-        return switch (r.getCalcMode()) {
-            case "FIXE_MENSUEL" ->
-                    r.getAmount() != null ? r.getAmount() : BigDecimal.ZERO;
-            case "FIXE_JOURNALIER" ->
-                    r.getAmount() != null
-                            ? r.getAmount()
-                              .multiply(BigDecimal.valueOf(joursTravailes))
-                              .divide(BigDecimal.valueOf(STANDARD_WORKING_DAYS), SCALE, RoundingMode.HALF_UP)
-                            : BigDecimal.ZERO;
-            case "POURCENTAGE_BRUT" ->
-                    r.getRate() != null
-                            ? gross.multiply(r.getRate()).setScale(SCALE, RoundingMode.HALF_UP)
-                            : BigDecimal.ZERO;
-            case "POURCENTAGE_CHARGES" ->
-                    r.getRate() != null
-                            ? totalBaseCharges.multiply(r.getRate()).setScale(SCALE, RoundingMode.HALF_UP)
-                            : BigDecimal.ZERO;
-            case "POURCENTAGE_PLAFONNE" -> {
-                if (r.getRate() == null) yield BigDecimal.ZERO;
-                BigDecimal effectiveBase = (r.getCapAmount() != null)
-                        ? gross.min(r.getCapAmount())
-                        : gross;
-                yield effectiveBase.multiply(r.getRate()).setScale(SCALE, RoundingMode.HALF_UP);
-            }
-            default -> BigDecimal.ZERO;
-        };
-    }
-
-    private List<PayrollRubrique> filterRubriques(List<PayrollRubrique> rubriques, String contractType) {
-        if (rubriques == null || rubriques.isEmpty()) return List.of();
-        return rubriques.stream()
-                .filter(r -> Boolean.TRUE.equals(r.getIsActive()))
-                .filter(r -> r.getContractTypes() == null
-                        || r.getContractTypes().isBlank()
-                        || List.of(r.getContractTypes().split(",")).contains(contractType))
-                .toList();
-    }
-
-    // -----------------------------------------------------------------------
-    //  Social charge helpers
-    // -----------------------------------------------------------------------
-
-    private BigDecimal computeCharges(BigDecimal base,
-                                       List<SocialChargeRate> rates,
-                                       String contractType,
-                                       boolean employee) {
-        return rates.stream()
-                .filter(r -> r.getContractType().equals(contractType))
-                .map(r -> {
-                    BigDecimal rate = employee ? r.getEmployeeRate() : r.getEmployerRate();
-                    return applyRate(base, rate, r.getCapAmount());
-                })
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    private BigDecimal applyRate(BigDecimal base, BigDecimal rate, BigDecimal cap) {
-        if (rate == null) return BigDecimal.ZERO;
-        BigDecimal effectiveBase = (cap != null) ? base.min(cap) : base;
-        return effectiveBase.multiply(rate).setScale(SCALE, RoundingMode.HALF_UP);
+                iterations, convergenceOk,
+                eval.evaluatedRubriques());
     }
 
     // -----------------------------------------------------------------------
@@ -287,6 +231,7 @@ public class PayrollSimulatorService {
             BigDecimal rubriquesDebit,         // total DEBIT rubriques applied
             BigDecimal employerShareRubriques, // employer contribution included in loadedCost
             int iterationsUsed,
-            boolean convergenceOk
+            boolean convergenceOk,
+            List<TopologicalEvaluator.EvaluatedRubrique> evaluatedRubriques
     ) {}
 }

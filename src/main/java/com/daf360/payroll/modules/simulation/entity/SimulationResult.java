@@ -52,14 +52,38 @@ public class SimulationResult {
     @Column(name = "loaded_cost_usd")
     private BigDecimal loadedCostUsd;
 
+    @Column(name = "loaded_cost_chf")
+    private BigDecimal loadedCostChf;
+
     @Column(name = "fx_rate_eur")
     private BigDecimal fxRateEur;
 
     @Column(name = "fx_rate_usd")
     private BigDecimal fxRateUsd;
 
+    @Column(name = "fx_rate_chf")
+    private BigDecimal fxRateChf;
+
     @Column(name = "local_currency", length = 10)
     private String localCurrency;
+
+    @Column(name = "gross_with_benefits")
+    private BigDecimal grossWithBenefits;
+
+    @Column(name = "cost_net_ratio")
+    private BigDecimal costNetRatio;
+
+    @Column(name = "candidate_label", length = 200)
+    private String candidateLabel;
+
+    @Column(name = "poste", length = 200)
+    private String poste;
+
+    @Column(name = "grade", length = 100)
+    private String grade;
+
+    @Column(name = "discipline", length = 100)
+    private String discipline;
 
     @Column(name = "irpp_amount")
     private BigDecimal irppAmount;
@@ -84,6 +108,10 @@ public class SimulationResult {
 
     @Column(name = "cohort_id")
     private Long cohortId;
+
+    /** Direction used: NET_TO_BRUT (default, classic) or BRUT_TO_NET (single-pass). */
+    @Column(name = "mode", nullable = false, length = 20)
+    private String mode = "NET_TO_BRUT";
 
     @Column(name = "simulated_by", nullable = false)
     private Long simulatedBy;

@@ -2,6 +2,10 @@ package com.daf360.payroll.modules.calibration.controller;
 
 import com.daf360.payroll.modules.calibration.dto.CalibrationCycleDto;
 import com.daf360.payroll.modules.calibration.dto.PartnerPayrollRow;
+import com.daf360.payroll.modules.calibration.entity.PayrollBudgetLine;
+import com.daf360.payroll.modules.calibration.entity.PayrollForecastOutput;
+import com.daf360.payroll.modules.calibration.repository.PayrollBudgetLineRepository;
+import com.daf360.payroll.modules.calibration.repository.PayrollForecastOutputRepository;
 import com.daf360.payroll.modules.calibration.service.CalibrationCycleService;
 import com.daf360.payroll.modules.calibration.service.PartnerPayrollParserService;
 import com.daf360.payroll.modules.ref.service.UserContextService;
@@ -18,16 +22,22 @@ import java.util.List;
 @RequestMapping("/api/payroll/calibration")
 public class CalibrationController {
 
-    private final CalibrationCycleService cycleService;
-    private final PartnerPayrollParserService parserService;
-    private final UserContextService userContext;
+    private final CalibrationCycleService        cycleService;
+    private final PartnerPayrollParserService     parserService;
+    private final UserContextService              userContext;
+    private final PayrollBudgetLineRepository     budgetLineRepo;
+    private final PayrollForecastOutputRepository forecastRepo;
 
     public CalibrationController(CalibrationCycleService cycleService,
                                   PartnerPayrollParserService parserService,
-                                  UserContextService userContext) {
-        this.cycleService = cycleService;
-        this.parserService = parserService;
-        this.userContext = userContext;
+                                  UserContextService userContext,
+                                  PayrollBudgetLineRepository budgetLineRepo,
+                                  PayrollForecastOutputRepository forecastRepo) {
+        this.cycleService   = cycleService;
+        this.parserService  = parserService;
+        this.userContext    = userContext;
+        this.budgetLineRepo = budgetLineRepo;
+        this.forecastRepo   = forecastRepo;
     }
 
     @GetMapping
@@ -60,5 +70,23 @@ public class CalibrationController {
         Long userId = userContext.currentUserId();
         List<PartnerPayrollRow> rows = parserService.parse(file);
         return cycleService.uploadActuals(id, rows, userId);
+    }
+
+    /** F.04 — budget lines auto-generated on parameter-set activation, keyed by paysId. */
+    @GetMapping("/budget-lines")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.RUN_CALIBRATION + "','"
+            + PermissionCatalog.VIEW_AGGREGATE + "','" + PermissionCatalog.EXPORT_BUDGET + "','"
+            + PermissionCatalog.VIEW_BUDGET_AGGREGATE + "')")
+    public List<PayrollBudgetLine> getBudgetLines(@RequestParam Long paysId) {
+        return budgetLineRepo.findByPaysIdOrderByPeriodDesc(paysId);
+    }
+
+    /** F.07 — forecast outputs auto-generated on parameter-set activation, keyed by paysId. */
+    @GetMapping("/forecast-outputs")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.RUN_CALIBRATION + "','"
+            + PermissionCatalog.VIEW_AGGREGATE + "','" + PermissionCatalog.EXPORT_BUDGET + "','"
+            + PermissionCatalog.VIEW_BUDGET_AGGREGATE + "')")
+    public List<PayrollForecastOutput> getForecastOutputs(@RequestParam Long paysId) {
+        return forecastRepo.findByPaysIdOrderByPeriodDesc(paysId);
     }
 }

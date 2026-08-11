@@ -19,5 +19,9 @@ public record SavePayrollRubriqueRequest(
         Boolean isSubjectToIrpp,
         String direction,
         String contractTypes,
-        Boolean isActive
+        Boolean isActive,
+        /** Formula expression for FORMULE calc mode, e.g. "BRUT * 0.02 + CNSS_EE * 0.5". */
+        String formulaExpression,
+        /** Position in evaluation order (0 = first); frontend sends array index. */
+        Integer displayOrder
 ) {}

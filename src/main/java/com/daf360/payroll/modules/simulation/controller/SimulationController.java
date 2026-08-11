@@ -1,14 +1,20 @@
 package com.daf360.payroll.modules.simulation.controller;
 
 import com.daf360.payroll.modules.ref.service.UserContextService;
+import com.daf360.payroll.modules.simulation.dto.CohortAggregateResponse;
+import com.daf360.payroll.modules.simulation.dto.CohortFilterRequest;
 import com.daf360.payroll.modules.simulation.dto.CohortSimulationRequest;
 import com.daf360.payroll.modules.simulation.dto.SimulationRequest;
 import com.daf360.payroll.modules.simulation.dto.SimulationResultDto;
+import com.daf360.payroll.modules.simulation.service.CohortAggregateService;
 import com.daf360.payroll.modules.simulation.service.CohortSimulationService;
 import com.daf360.payroll.modules.simulation.service.IndividualSimulationService;
+import com.daf360.payroll.modules.simulation.service.SimulationPdfService;
 import com.daf360.payroll.security.PermissionCatalog;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -21,13 +27,19 @@ public class SimulationController {
 
     private final IndividualSimulationService individualService;
     private final CohortSimulationService cohortService;
+    private final CohortAggregateService cohortAggregateService;
+    private final SimulationPdfService pdfService;
     private final UserContextService userContext;
 
     public SimulationController(IndividualSimulationService individualService,
                                  CohortSimulationService cohortService,
+                                 CohortAggregateService cohortAggregateService,
+                                 SimulationPdfService pdfService,
                                  UserContextService userContext) {
         this.individualService = individualService;
         this.cohortService = cohortService;
+        this.cohortAggregateService = cohortAggregateService;
+        this.pdfService = pdfService;
         this.userContext = userContext;
     }
 
@@ -57,5 +69,21 @@ public class SimulationController {
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.VIEW_AGGREGATE + "')")
     public List<SimulationResultDto> getCohortResults(@PathVariable Long cohortId) {
         return cohortService.getByCohort(cohortId);
+    }
+
+    @PostMapping("/cohort/aggregate")
+    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_SIMULATION + "')")
+    public ResponseEntity<CohortAggregateResponse> runCohortAggregate(@RequestBody @Valid CohortFilterRequest req) {
+        return ResponseEntity.ok(cohortAggregateService.aggregate(req));
+    }
+
+    @GetMapping("/{id}/export-pdf")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.RUN_SIMULATION + "')")
+    public ResponseEntity<byte[]> exportPdf(@PathVariable Long id) {
+        SimulationPdfService.PdfOrHtmlResult result = pdfService.export(id);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(result.contentType()));
+        headers.setContentDispositionFormData("attachment", result.filename());
+        return ResponseEntity.ok().headers(headers).body(result.bytes());
     }
 }

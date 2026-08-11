@@ -10,5 +10,11 @@ public record SocialChargeRateDto(
         BigDecimal employeeRate,
         BigDecimal employerRate,
         String baseCalculation,
-        BigDecimal capAmount
+        BigDecimal capAmount,
+        /** Formula override for the employee-side amount; null = use employeeRate × base. */
+        String formulaEe,
+        /** Formula override for the employer-side amount; null = use employerRate × base. */
+        String formulaEr,
+        /** Evaluation order; lower-order charges are evaluated first. */
+        Integer evalOrder
 ) {}

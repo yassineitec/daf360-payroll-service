@@ -2,12 +2,14 @@ package com.daf360.payroll.modules.simulation.service;
 
 import com.daf360.payroll.engine.FxSnapshotService;
 import com.daf360.payroll.engine.PayrollSimulatorService;
+import com.daf360.payroll.engine.TopologicalEvaluator;
 import com.daf360.payroll.modules.parameterset.entity.BenefitCatalogue;
 import com.daf360.payroll.modules.parameterset.entity.ParameterSet;
 import com.daf360.payroll.modules.parameterset.entity.PayrollRubrique;
 import com.daf360.payroll.modules.parameterset.entity.SocialChargeRate;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.simulation.dto.CohortSimulationRequest;
+import com.daf360.payroll.modules.simulation.dto.SimulationMode;
 import com.daf360.payroll.modules.simulation.dto.SimulationResultDto;
 import com.daf360.payroll.modules.simulation.entity.CohortDefinition;
 import com.daf360.payroll.modules.simulation.entity.SimulationResult;
@@ -55,14 +57,41 @@ public class CohortSimulationService {
 
         CohortDefinition cohort = createCohort(req, ps.getId(), simulatedBy);
 
+        SimulationMode mode = req.mode() != null ? req.mode() : SimulationMode.NET_TO_BRUT;
+
         List<SimulationResult> results = new ArrayList<>();
         BigDecimal totalLoadedCost = BigDecimal.ZERO;
 
         for (CohortSimulationRequest.EmployeeSimEntry entry : req.employees()) {
             String contractType = entry.contractType() != null ? entry.contractType() : "CDI";
 
-            PayrollSimulatorService.PayrollResult calc =
-                    simulatorService.computeFromNet(entry.inputNet(), ps, rates, benefits, rubriques, contractType, 22);
+            PayrollSimulatorService.PayrollResult calc;
+            if (mode == SimulationMode.BRUT_TO_NET) {
+                if (entry.inputGross() == null || entry.inputGross().compareTo(BigDecimal.ZERO) <= 0)
+                    throw new IllegalArgumentException(
+                            "inputGross est requis pour chaque entrée en mode BRUT_TO_NET" +
+                            " (profileUserId=" + entry.profileUserId() + ").");
+                calc = simulatorService.computeFromGross(
+                        entry.inputGross(), ps, rates, benefits, rubriques, contractType, 22);
+            } else {
+                if (entry.inputNet() == null || entry.inputNet().compareTo(BigDecimal.ZERO) <= 0)
+                    throw new IllegalArgumentException(
+                            "inputNet est requis pour chaque entrée en mode NET_TO_BRUT" +
+                            " (profileUserId=" + entry.profileUserId() + ").");
+                calc = simulatorService.computeFromNet(
+                        entry.inputNet(), ps, rates, benefits, rubriques, contractType, 22);
+            }
+
+            BigDecimal netInHand = calc.netInHand();
+            BigDecimal exemptBenefits = benefits.stream()
+                    .filter(b -> Boolean.FALSE.equals(b.getIsTaxable()))
+                    .map(b -> b.getMonthlyValue() != null ? b.getMonthlyValue() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal grossWithBen = calc.gross().add(exemptBenefits)
+                    .setScale(4, java.math.RoundingMode.HALF_UP);
+            BigDecimal ratio = netInHand.compareTo(BigDecimal.ZERO) > 0
+                    ? calc.loadedCost().divide(netInHand, 6, java.math.RoundingMode.HALF_UP)
+                    : null;
 
             SimulationResult entity = new SimulationResult();
             entity.setPaysId(req.paysId());
@@ -70,21 +99,26 @@ public class CohortSimulationService {
             entity.setParameterSetId(ps.getId());
             entity.setSimulationType("COHORT");
             entity.setContractType(contractType);
-            entity.setInputNet(entry.inputNet());
+            entity.setMode(mode.name());
+            entity.setInputNet(netInHand);
             entity.setNetTaxable(calc.netTaxable());
             entity.setTaxableBase(calc.taxableBase());
             entity.setGross(calc.gross());
+            entity.setGrossWithBenefits(grossWithBen);
+            entity.setCostNetRatio(ratio);
             entity.setLoadedCost(calc.loadedCost());
             entity.setLocalCurrency(fxService.localCurrency(req.paysId()));
             entity.setFxRateEur(fxService.eurRate(req.paysId()));
             entity.setFxRateUsd(fxService.usdRate(req.paysId()));
+            entity.setFxRateChf(fxService.chfRate(req.paysId()));
             entity.setLoadedCostEur(fxService.convertToEur(calc.loadedCost(), req.paysId()));
             entity.setLoadedCostUsd(fxService.convertToUsd(calc.loadedCost(), req.paysId()));
+            entity.setLoadedCostChf(fxService.convertToChf(calc.loadedCost(), req.paysId()));
             entity.setIrppAmount(calc.irppAmount());
             entity.setEmployeeCharges(calc.employeeCharges());
             entity.setEmployerCharges(calc.employerCharges());
             entity.setBenefitsApplied(serializeBenefits(benefits));
-            entity.setRubriquesApplied(serializeRubriques(rubriques));
+            entity.setRubriquesApplied(serializeRubriques(calc.evaluatedRubriques()));
             entity.setIterationsUsed(calc.iterationsUsed());
             entity.setConvergenceOk(calc.convergenceOk());
             entity.setCohortId(cohort.getId());
@@ -131,14 +165,19 @@ public class CohortSimulationService {
         }
     }
 
-    private String serializeRubriques(List<PayrollRubrique> rubriques) {
+    private String serializeRubriques(List<TopologicalEvaluator.EvaluatedRubrique> evaluatedRubriques) {
         try {
-            return objectMapper.writeValueAsString(rubriques.stream()
-                    .map(r -> Map.of(
-                            "code", r.getCode(),
-                            "nature", r.getNature(),
-                            "calcMode", r.getCalcMode(),
-                            "direction", r.getDirection()))
+            return objectMapper.writeValueAsString(evaluatedRubriques.stream()
+                    .map(er -> {
+                        PayrollRubrique r = er.rubrique();
+                        java.util.HashMap<String, Object> m = new java.util.HashMap<>();
+                        m.put("code",      r.getCode());
+                        m.put("nature",    r.getNature());
+                        m.put("calcMode",  r.getCalcMode());
+                        m.put("direction", r.getDirection());
+                        m.put("amount",    er.amount());
+                        return m;
+                    })
                     .toList());
         } catch (Exception e) {
             return "[]";
@@ -148,14 +187,18 @@ public class CohortSimulationService {
     private SimulationResultDto toDto(SimulationResult e) {
         return new SimulationResultDto(
                 e.getId(), e.getPaysId(), e.getProfileUserId(), e.getParameterSetId(),
-                e.getSimulationType(), e.getContractType(), e.getInputNet(),
-                e.getNetTaxable(), e.getTaxableBase(), e.getGross(), e.getLoadedCost(),
-                e.getLoadedCostEur(), e.getLoadedCostUsd(),
-                e.getFxRateEur(), e.getFxRateUsd(),
-                e.getLocalCurrency(),
+                e.getSimulationType(), e.getContractType(),
+                e.getInputNet(), e.getNetTaxable(), e.getTaxableBase(),
+                e.getGross(), e.getGrossWithBenefits(), e.getLoadedCost(),
+                e.getLoadedCostEur(), e.getLoadedCostUsd(), e.getLoadedCostChf(),
+                e.getFxRateEur(), e.getFxRateUsd(), e.getFxRateChf(),
+                e.getLocalCurrency(), e.getCostNetRatio(),
                 e.getIrppAmount(), e.getEmployeeCharges(), e.getEmployerCharges(),
                 e.getBenefitsApplied(), e.getRubriquesApplied(),
                 e.getIterationsUsed(), e.getConvergenceOk(),
-                e.getCohortId(), e.getSimulatedAt());
+                e.getCohortId(),
+                e.getCandidateLabel(), e.getPoste(), e.getGrade(), e.getDiscipline(),
+                e.getMode(),
+                e.getSimulatedAt());
     }
 }

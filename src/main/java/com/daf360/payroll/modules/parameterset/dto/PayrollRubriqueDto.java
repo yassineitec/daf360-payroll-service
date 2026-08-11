@@ -20,5 +20,9 @@ public record PayrollRubriqueDto(
         String direction,
         String contractTypes,
         Boolean isActive,
+        /** Arithmetic expression used when calcMode = 'FORMULE'. */
+        String formulaExpression,
+        /** Evaluation order; lower-order rubriques run first and are referenceable by later FORMULE rubriques. */
+        Integer displayOrder,
         OffsetDateTime createdAt
 ) {}

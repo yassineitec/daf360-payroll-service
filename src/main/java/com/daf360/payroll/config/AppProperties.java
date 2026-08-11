@@ -15,7 +15,9 @@ public class AppProperties {
     private String jwtSecret;
     private String jwtPublicKeyPath = "";
     private List<String> allowedOrigins = List.of("http://localhost:8080", "http://localhost:4205", "http://localhost:4200");
-    private String hrApiBaseUrl = "http://daf360-rh-backend:8888";
+    private String hrApiBaseUrl    = "http://daf360-rh-backend:8888";
+    private String hrServiceKey    = "";
+    private String pdfServiceUrl   = "http://localhost:3000";
     private boolean mailEnabled = false;
     private String mailFrom = "noreply@daf360.com";
     private boolean jwtDisabled = false;
@@ -28,5 +30,6 @@ public class AppProperties {
         private String currency = "";       // local ISO code: TND, EGP, EUR, SAR, AED …
         private BigDecimal eur = BigDecimal.ONE;
         private BigDecimal usd = BigDecimal.ONE;
+        private BigDecimal chf = BigDecimal.ONE;
     }
 }

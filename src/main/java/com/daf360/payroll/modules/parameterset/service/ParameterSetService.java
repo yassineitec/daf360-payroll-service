@@ -181,10 +181,14 @@ public class ParameterSetService {
             r.setContractType(d.contractType());
             r.setChargeCode(d.chargeCode());
             r.setChargeLabel(d.chargeLabel());
-            r.setEmployeeRate(d.employeeRate());
-            r.setEmployerRate(d.employerRate());
+            r.setEmployeeRate(d.employeeRate() != null ? d.employeeRate() : java.math.BigDecimal.ZERO);
+            r.setEmployerRate(d.employerRate() != null ? d.employerRate() : java.math.BigDecimal.ZERO);
             r.setBaseCalculation(d.baseCalculation() != null ? d.baseCalculation() : "GROSS");
             r.setCapAmount(d.capAmount());
+            // V19 formula fields
+            r.setFormulaEe(d.formulaEe() != null && !d.formulaEe().isBlank() ? d.formulaEe().trim() : null);
+            r.setFormulaEr(d.formulaEr() != null && !d.formulaEr().isBlank() ? d.formulaEr().trim() : null);
+            r.setEvalOrder(d.evalOrder() != null ? d.evalOrder() : 0);
             return r;
         }).toList();
         rateRepo.saveAll(entities);
@@ -228,6 +232,8 @@ public class ParameterSetService {
             r.setDirection(d.direction() != null ? d.direction() : "CREDIT");
             r.setContractTypes(d.contractTypes());
             r.setIsActive(d.isActive() != null ? d.isActive() : true);
+            r.setFormulaExpression(d.formulaExpression());
+            r.setDisplayOrder(d.displayOrder() != null ? d.displayOrder() : 0);
             return r;
         }).toList();
         rubriqueRepo.saveAll(entities);
@@ -250,7 +256,8 @@ public class ParameterSetService {
                 .map(r -> new SocialChargeRateDto(r.getId(), r.getContractType(),
                         r.getChargeCode(), r.getChargeLabel(),
                         r.getEmployeeRate(), r.getEmployerRate(),
-                        r.getBaseCalculation(), r.getCapAmount()))
+                        r.getBaseCalculation(), r.getCapAmount(),
+                        r.getFormulaEe(), r.getFormulaEr(), r.getEvalOrder()))
                 .toList();
 
         List<BenefitCatalogueDto> benefits = benefitRepo.findByParameterSetId(ps.getId()).stream()
@@ -266,7 +273,8 @@ public class ParameterSetService {
                         r.getAmount(), r.getRate(), r.getCapAmount(),
                         r.getEmployerSharePct(), r.getEmployeeSharePct(),
                         r.getIsSubjectToSocialCharges(), r.getIsSubjectToIrpp(),
-                        r.getDirection(), r.getContractTypes(), r.getIsActive(), r.getCreatedAt()))
+                        r.getDirection(), r.getContractTypes(), r.getIsActive(),
+                        r.getFormulaExpression(), r.getDisplayOrder(), r.getCreatedAt()))
                 .toList();
 
         return new ParameterSetDto(

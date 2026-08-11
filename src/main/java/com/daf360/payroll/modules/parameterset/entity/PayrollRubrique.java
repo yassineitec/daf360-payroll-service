@@ -64,6 +64,16 @@ public class PayrollRubrique {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
+    /** Arithmetic expression evaluated when calc_mode = 'FORMULE'.
+     *  Variables: BRUT, CHARGES_EE, CHARGES_ER, {CHARGE_CODE}_EE/ER, {RUBRIQUE_CODE}. */
+    @Column(name = "formula_expression", length = 1000)
+    private String formulaExpression;
+
+    /** Evaluation order within a parameter set; lower = evaluated first.
+     *  A FORMULE rubrique can only reference rubriques with a lower display_order. */
+    @Column(name = "display_order", nullable = false)
+    private Integer displayOrder = 0;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 }

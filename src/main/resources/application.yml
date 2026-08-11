@@ -77,6 +77,8 @@ app:
   # (localhost:8888) and HR_API_BASE_URL had no effect. Both now resolve from the
   # same env var so one setting drives every HR call.
   rh-service-url: ${HR_API_BASE_URL:http://localhost:8888}
+  pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
+  hr-service-key: ${SERVICE_KEY:daf360-internal-key-change-in-prod}
   mail-enabled: ${MAIL_ENABLED:false}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
   # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD
@@ -85,24 +87,35 @@ app:
   # France  (62):        1 EUR ≈ 1.000 EUR, 1.090 USD
   # Saudi Arabia (152):  1 SAR ≈ 0.250 EUR, 0.267 USD
   # UAE (185):           1 AED ≈ 0.250 EUR, 0.272 USD
+  # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD / CHF
+  # Tunisia (179):       1 TND ≈ 0.300 EUR, 0.325 USD, 0.316 CHF
+  # Egypt   (53):        1 EGP ≈ 0.019 EUR, 0.021 USD, 0.020 CHF
+  # France  (62):        1 EUR ≈ 1.000 EUR, 1.090 USD, 1.055 CHF
+  # Saudi Arabia (152):  1 SAR ≈ 0.250 EUR, 0.267 USD, 0.264 CHF
+  # UAE (185):           1 AED ≈ 0.250 EUR, 0.272 USD, 0.264 CHF
   fx-rates:
     "179":
       currency: TND
       eur: ${FX_TND_EUR:0.300}
       usd: ${FX_TND_USD:0.325}
+      chf: ${FX_TND_CHF:0.316}
     "53":
       currency: EGP
       eur: ${FX_EGP_EUR:0.019}
       usd: ${FX_EGP_USD:0.021}
+      chf: ${FX_EGP_CHF:0.020}
     "62":
       currency: EUR
       eur: ${FX_EUR_EUR:1.0}
       usd: ${FX_EUR_USD:1.090}
+      chf: ${FX_EUR_CHF:1.055}
     "152":
       currency: SAR
       eur: ${FX_SAR_EUR:0.250}
       usd: ${FX_SAR_USD:0.267}
+      chf: ${FX_SAR_CHF:0.264}
     "185":
       currency: AED
       eur: ${FX_AED_EUR:0.250}
       usd: ${FX_AED_USD:0.272}
+      chf: ${FX_AED_CHF:0.264}

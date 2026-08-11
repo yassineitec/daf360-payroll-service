@@ -11,4 +11,6 @@ public interface PayrollResultRepository extends JpaRepository<PayrollResult, Lo
     List<PayrollResult> findByEmployeeIdOrderByPeriodYearDescPeriodMonthDesc(Long employeeId);
 
     Optional<PayrollResult> findByEmployeeIdAndPeriodYearAndPeriodMonth(Long employeeId, int year, int month);
+
+    List<PayrollResult> findByCountryIdAndPeriodYearAndPeriodMonth(Long countryId, int periodYear, int periodMonth);
 }
