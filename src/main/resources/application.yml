@@ -5,10 +5,15 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 
+  # Valeurs par défaut alignées sur rh-service : sans elles, un démarrage hors Docker
+  # (mvn spring-boot:run, IDE) passait la chaîne littérale « ${DB_PAYROLL_URL} » à Hikari
+  # et le bean `flyway` explosait avec « Driver … claims to not accept jdbcUrl ».
+  # Les variables d'environnement gardent la priorité : docker-compose et les
+  # déploiements continuent d'imposer les leurs.
   datasource:
-    url: ${DB_PAYROLL_URL}
-    username: ${DB_PAYROLL_USER}
-    password: ${DB_PAYROLL_PASSWORD}
+    url: ${DB_PAYROLL_URL:jdbc:sqlserver://localhost:1433;databaseName=DAF360_PAYROLL;encrypt=false;trustServerCertificate=true}
+    username: ${DB_PAYROLL_USER:sa}
+    password: ${DB_PAYROLL_PASSWORD:Timesheetdev2026!**}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
     hikari:
       connection-timeout: 30000
@@ -69,7 +74,13 @@ logging:
 
 app:
   jwt-secret: ${JWT_SECRET:daf360-change-me-in-production-32chars}
-  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:}
+  # Clé publique RSA du portail — c'est elle qui valide le cookie `daf360_access`.
+  # Le défaut était vide : hors Docker, le service ne pouvait valider AUCUN jeton RS256 et
+  # refusait toute requête (403) dès que le jeton HMAC ne correspondait pas non plus.
+  # Le chemin par défaut vise le dossier de clés du portail, relatif au répertoire de
+  # travail du service (`mvn spring-boot:run` depuis `daf360-payroll-service/`) ; en
+  # conteneur, JWT_PUBLIC_KEY_PATH=/app/keys/public.pem l'emporte comme avant.
+  jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:../daf360-portal/keys/public.pem}
   allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8080,http://localhost:4205,http://localhost:4200}
   hr-api-base-url: ${HR_API_BASE_URL:http://localhost:8888}
   # ProfileSyncService reads `app.rh-service-url` via @Value, NOT hr-api-base-url.

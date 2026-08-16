@@ -54,38 +54,62 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         if (token != null) {
             try {
-                if (jwtService.isTokenValid(token)) {
-                    Claims claims = jwtService.parseToken(token);
-                    @SuppressWarnings("unchecked")
-                    List<String> permissions = claims.get("permissions", List.class);
-                    List<SimpleGrantedAuthority> authorities = permissions == null
-                            ? List.of()
-                            : permissions.stream()
-                                    .map(SimpleGrantedAuthority::new)
-                                    .collect(Collectors.toList());
+                Claims claims = jwtService.parseToken(token);
+                @SuppressWarnings("unchecked")
+                List<String> permissions = claims.get("permissions", List.class);
+                List<SimpleGrantedAuthority> authorities = permissions == null
+                        ? List.of()
+                        : permissions.stream()
+                                .map(SimpleGrantedAuthority::new)
+                                .collect(Collectors.toList());
 
-                    UsernamePasswordAuthenticationToken auth =
-                            new UsernamePasswordAuthenticationToken(
-                                    claims.getSubject(), null, authorities);
-                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                }
+                UsernamePasswordAuthenticationToken auth =
+                        new UsernamePasswordAuthenticationToken(
+                                claims.getSubject(), null, authorities);
+                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(auth);
             } catch (Exception e) {
-                log.debug("JWT filter error: {}", e.getMessage());
+                log.warn("JWT filter error on {}: {}", request.getRequestURI(), e.getMessage());
             }
         }
 
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * The first token that actually VALIDATES, trying every source the browser may send.
+     *
+     * It used to return the first token merely *present* — in practice the `Authorization`
+     * header — and give up if it didn't verify. The portal signs the HMAC `rhToken` and the
+     * RS256 `daf360_access` cookie with different keys, so a service whose `app.jwt-secret`
+     * doesn't match the portal's rejected the Bearer token and never looked at the cookie
+     * it could have verified: no principal, and every `@PreAuthorize` answered 403 while
+     * rh-service — which has always looped over its candidates — accepted the same request.
+     * That is exactly how a locally-run payroll-service (no `JWT_SECRET`, no
+     * `JWT_PUBLIC_KEY_PATH`) turned a working session into "Access Denied" on every call.
+     *
+     * Same order and same semantics as `daf360-rh-service`'s filter — keep the two aligned.
+     */
     private String resolveToken(HttpServletRequest request) {
         String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
-            return header.substring(7);
+        String bearer = (header != null && header.startsWith("Bearer ")) ? header.substring(7) : null;
+
+        String[][] candidates = {
+            { bearer,                                   "Bearer header" },
+            { cookieValue(request, "daf360_rh"),        "daf360_rh (HMAC cookie)" },
+            { cookieValue(request, "daf360_access"),    "daf360_access (RSA cookie)" },
+        };
+
+        for (String[] candidate : candidates) {
+            if (candidate[0] == null) continue;
+            if (jwtService.isTokenValid(candidate[0])) {
+                log.debug("JWT authenticated via {} for {}", candidate[1], request.getRequestURI());
+                return candidate[0];
+            }
+            log.debug("JWT: {} invalid for {}", candidate[1], request.getRequestURI());
         }
-        String rh = cookieValue(request, "daf360_rh");
-        if (rh != null) return rh;
-        return cookieValue(request, "daf360_access");
+
+        return null;
     }
 
     private String cookieValue(HttpServletRequest request, String name) {
