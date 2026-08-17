@@ -46,7 +46,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     new UsernamePasswordAuthenticationToken("1", null, allAuthorities);
             auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
             SecurityContextHolder.getContext().setAuthentication(auth);
-            filterChain.doFilter(request, response);
+            // Offline mode already grants every code, PAYROLL_SUPER_ADMIN included, which
+            // bypasses pays isolation; an explicit unrestricted scope keeps the two aligned.
+            PaysScopeContext.set(PaysScopeContext.PaysScope.unrestricted());
+            try {
+                filterChain.doFilter(request, response);
+            } finally {
+                PaysScopeContext.clear();
+            }
             return;
         }
 
@@ -68,12 +75,23 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                 claims.getSubject(), null, authorities);
                 auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(auth);
+
+                // Country scope from the role (V74). Null when the token predates it —
+                // UserContextService then falls back to UsersRef.pays_id as before.
+                PaysScopeContext.set(PaysScopeContext.fromClaims(
+                        claims.get("paysScopeAll"), claims.get("paysIds")));
             } catch (Exception e) {
                 log.warn("JWT filter error on {}: {}", request.getRequestURI(), e.getMessage());
             }
         }
 
-        filterChain.doFilter(request, response);
+        // finally, not a plain call: the servlet thread is pooled, so a scope left behind
+        // here would be read by the next unrelated request that lands on this thread.
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            PaysScopeContext.clear();
+        }
     }
 
     /**

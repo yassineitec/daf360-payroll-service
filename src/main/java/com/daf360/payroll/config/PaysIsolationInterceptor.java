@@ -1,7 +1,7 @@
 package com.daf360.payroll.config;
 
-import com.daf360.payroll.modules.ref.entity.UsersRef;
 import com.daf360.payroll.modules.ref.service.UserContextService;
+import com.daf360.payroll.security.PaysScopeContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +16,13 @@ import java.io.IOException;
 /**
  * Enforces per-entity pays (country) data isolation for all /api/payroll/** endpoints.
  * PAYROLL_SUPER_ADMIN bypasses the check.
+ *
+ * Everyone else may only pass a paysId inside their ROLE's country scope (V74): mode ALL =
+ * any country, LIST = the countries listed on the role (same set for every holder), OWN =
+ * their own UsersRef.pays_id, which is also what a token without scope claims resolves to.
+ *
+ * A guard on a request parameter, not an injector: an endpoint taking no paysId is not
+ * country-filtered at all. Kept aligned with facturation-service's copy of this class.
  */
 @Component
 @RequiredArgsConstructor
@@ -47,10 +54,11 @@ public class PaysIsolationInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        Long userPaysId = userContextService.currentUser()
-                .map(UsersRef::getPaysId)
-                .orElse(null);
-        if (userPaysId == null || !userPaysId.equals(requestedPays)) {
+        PaysScopeContext.PaysScope scope = userContextService.getCurrentUserPaysScope();
+        // Unresolved entity previously meant 403 here (userPaysId == null failed the check),
+        // unlike facturation which allowed it. That asymmetry is kept: payroll data is more
+        // sensitive, so an unknown scope stays denied rather than becoming permissive.
+        if (scope == null || !scope.allows(requestedPays)) {
             forbidden(response);
             return false;
         }
