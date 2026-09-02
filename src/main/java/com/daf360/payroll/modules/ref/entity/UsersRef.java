@@ -26,4 +26,11 @@ public class UsersRef {
 
     @Column(name = "role_name")
     private String roleName;
+
+    /**
+     * False for a test, duplicate or machine account. The row is still synced — other tables
+     * reference users_ref — so only the PICKERS filter on this.
+     */
+    @Column(name = "is_employee", nullable = false)
+    private Boolean isEmployee = true;
 }

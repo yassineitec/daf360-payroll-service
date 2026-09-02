@@ -105,6 +105,9 @@ public class ProfileSyncService {
                 u.setEmail((String) m.get("email"));
                 u.setPaysId(toLong(m.get("paysId")));
                 u.setRoleName((String) m.get("roleName"));
+                // Defaults to true when an older rh-service does not send the field, rather
+                // than emptying every picker at once.
+                u.setIsEmployee(m.get("isEmployee") == null || Boolean.TRUE.equals(m.get("isEmployee")));
                 return u;
             }).toList();
 

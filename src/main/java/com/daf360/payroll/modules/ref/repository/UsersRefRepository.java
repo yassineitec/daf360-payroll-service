@@ -13,4 +13,14 @@ public interface UsersRefRepository extends JpaRepository<UsersRef, Long> {
     Optional<UsersRef> findByAzureOid(String azureOid);
 
     List<UsersRef> findByPaysId(Long paysId);
+
+    /*
+     * The picker queries. The is_employee predicate lives in SQL, not in a .filter() on the
+     * result, so it shows up verbatim in the Hibernate DEBUG line: when a ghost account turns
+     * up in a dropdown, one log entry distinguishes "the filter did not run" from "the replica
+     * was stale" from "the page had not re-fetched". A stream filter leaves no such trace.
+     */
+    List<UsersRef> findByIsEmployeeTrueOrderByFullNameAsc();
+
+    List<UsersRef> findByPaysIdAndIsEmployeeTrueOrderByFullNameAsc(Long paysId);
 }
