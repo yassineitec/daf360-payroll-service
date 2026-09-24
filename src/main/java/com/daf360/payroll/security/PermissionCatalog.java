@@ -28,6 +28,8 @@ public final class PermissionCatalog {
     public static final String IMPORT_CALIBRATION          = "PAYROLL_IMPORT_CALIBRATION";
     /** Country Director role: read-only view of aggregate budget/forecast data, no individual salary access. */
     public static final String VIEW_BUDGET_AGGREGATE       = "PAYROLL_VIEW_BUDGET_AGGREGATE";
+    public static final String VIEW_EMPLOYEE_CONFIG        = "PAYROLL_VIEW_EMPLOYEE_CONFIG";
+    public static final String MANAGE_EMPLOYEE_CONFIG      = "PAYROLL_MANAGE_EMPLOYEE_CONFIG";
 
     /** All codes — used to validate PermissionCatalog entries in RH service. */
     public static final Set<String> ALL_CODES = Set.of(
@@ -35,7 +37,8 @@ public final class PermissionCatalog {
             EXPORT_BUDGET, IMPORT_PARTNER, VIEW_AGGREGATE, APPROVE_PARAMSET_FAST_TRACK,
             VIEW_PARAMSET, UPLOAD_ACTUAL, SUPER_ADMIN,
             RUN_ENGINE, VIEW_RESULTS, MANAGE_RUBRIQUES, MANAGE_COUNTRIES,
-            IMPORT_CALIBRATION, VIEW_BUDGET_AGGREGATE
+            IMPORT_CALIBRATION, VIEW_BUDGET_AGGREGATE,
+            VIEW_EMPLOYEE_CONFIG, MANAGE_EMPLOYEE_CONFIG
     );
 
     /** Permissions that bypass pays isolation. */

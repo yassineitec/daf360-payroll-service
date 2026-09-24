@@ -1,0 +1,421 @@
+<title>Calibration Paie</title>
+<style>
+  :root {
+    --bg: #EEF1EF;
+    --surface: #FFFFFF;
+    --surface-2: #E2E8E4;
+    --ink: #16241F;
+    --ink-soft: #4B5B53;
+    --ink-faint: #7C8C84;
+    --line: #CBD5CE;
+    --accent: #1F6F5C;
+    --accent-ink: #0F3D32;
+    --accent-soft: #DCEEE8;
+    --ok: #2E7D4F;
+    --ok-bg: #E4F3E8;
+    --ok-line: #B9DCC3;
+    --warn: #A66A1E;
+    --warn-bg: #FBF0DD;
+    --warn-line: #ECD3A3;
+    --gap: #B23A3A;
+    --gap-bg: #FBE7E7;
+    --gap-line: #EFC0C0;
+    --mono-bg: #E9EDEA;
+    --shadow: 0 1px 2px rgba(15, 30, 24, 0.06), 0 6px 20px rgba(15, 30, 24, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101613;
+      --surface: #161F1A;
+      --surface-2: #1D2822;
+      --ink: #E7EDE9;
+      --ink-soft: #A9B9B0;
+      --ink-faint: #74847B;
+      --line: #2A3A32;
+      --accent: #4FBF9E;
+      --accent-ink: #BFF0DF;
+      --accent-soft: #163029;
+      --ok: #59C081;
+      --ok-bg: #142A1D;
+      --ok-line: #245334;
+      --warn: #E7AC52;
+      --warn-bg: #2C2313;
+      --warn-line: #4A3A1C;
+      --gap: #E4807F;
+      --gap-bg: #2E1616;
+      --gap-line: #4C2626;
+      --mono-bg: #1B2420;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101613;
+    --surface: #161F1A;
+    --surface-2: #1D2822;
+    --ink: #E7EDE9;
+    --ink-soft: #A9B9B0;
+    --ink-faint: #74847B;
+    --line: #2A3A32;
+    --accent: #4FBF9E;
+    --accent-ink: #BFF0DF;
+    --accent-soft: #163029;
+    --ok: #59C081;
+    --ok-bg: #142A1D;
+    --ok-line: #245334;
+    --warn: #E7AC52;
+    --warn-bg: #2C2313;
+    --warn-line: #4A3A1C;
+    --gap: #E4807F;
+    --gap-bg: #2E1616;
+    --gap-line: #4C2626;
+    --mono-bg: #1B2420;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55;
+    padding-inline: max(16px, calc((100% - 860px) / 2));
+    padding-block: 48px 96px;
+  }
+  h1, h2, h3 { font-family: "Fraunces", Georgia, "Times New Roman", serif; color: var(--ink); text-wrap: balance; }
+  code, .mono, .k-path, .k-field, table td.mono-cell { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent-ink); margin-bottom: 10px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+  h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 600; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .subtitle { color: var(--ink-soft); font-size: 16.5px; max-width: 62ch; margin: 0 0 32px; }
+
+  .status-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 44px; }
+  .status-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .status-card .label { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+  .status-card .name { font-size: 15.5px; font-weight: 600; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+    font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent;
+  }
+  .pill.ok   { background: var(--ok-bg);   color: var(--ok);   border-color: var(--ok-line); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-line); }
+  .pill.gap  { background: var(--gap-bg);  color: var(--gap);  border-color: var(--gap-line); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+  section.feature {
+    border-top: 1px solid var(--line);
+    padding-block: 40px;
+  }
+  section.feature:first-of-type { border-top: none; padding-top: 0; }
+
+  .feature-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
+  .feature-tag { font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--accent-ink); }
+  h2 { font-size: 23px; font-weight: 600; margin: 2px 0 6px; }
+  .feature-obj { color: var(--ink-soft); max-width: 68ch; margin: 0 0 22px; }
+
+  h3 { font-size: 14.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-soft); margin: 26px 0 12px; }
+  h3:first-of-type { margin-top: 0; }
+
+  .classes-box {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; font-size: 13.5px; color: var(--ink-soft); box-shadow: var(--shadow);
+  }
+  .classes-box .mono { color: var(--ink); }
+  .classes-box p { margin: 4px 0; }
+
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; background: var(--surface); font-size: 13.5px; }
+  thead th {
+    text-align: left; font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--ink-faint); background: var(--surface-2); padding: 10px 14px; border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .k-path { display: inline-block; background: var(--mono-bg); color: var(--ink); border-radius: 5px; padding: 1px 7px; font-size: 12.5px; }
+  .k-verb { font-weight: 700; font-size: 11.5px; letter-spacing: .04em; }
+  .k-verb.get { color: var(--accent-ink); } .k-verb.post { color: var(--warn); }
+
+  .fields-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .field-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .field-card .table-name { font-size: 12px; color: var(--ink-faint); margin-bottom: 8px; }
+  .field-card .table-name .k-field { color: var(--ink-soft); }
+  .field-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .k-field { font-size: 12px; background: var(--mono-bg); border-radius: 5px; padding: 2px 7px; color: var(--ink); }
+
+  .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; }
+  .steps li::before {
+    counter-increment: step; content: counter(step);
+    flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-ink);
+    font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px;
+  }
+  .steps li p { margin: 0; color: var(--ink); }
+  .steps li p .mono { font-size: 12.5px; }
+
+  .callout { border-radius: 10px; padding: 14px 16px; margin-top: 18px; border: 1px solid; font-size: 14px; }
+  .callout.gap  { background: var(--gap-bg);  border-color: var(--gap-line); color: var(--ink); }
+  .callout.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--ink); }
+  .callout.ok   { background: var(--ok-bg);   border-color: var(--ok-line);  color: var(--ink); }
+  .callout .callout-label { display: block; font-weight: 700; font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 5px; }
+  .callout.gap .callout-label  { color: var(--gap); }
+  .callout.warn .callout-label { color: var(--warn); }
+  .callout.ok .callout-label   { color: var(--ok); }
+  .callout p { margin: 0 0 6px; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .mono { font-size: 13px; }
+
+  .perm-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+  .perm-chip { font-size: 12.5px; background: var(--mono-bg); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; color: var(--ink); }
+
+  footer.wrap {
+    margin-top: 44px; padding-top: 28px; border-top: 1px solid var(--line);
+  }
+  .reco {
+    background: var(--surface); border: 1px solid var(--accent); border-radius: 12px;
+    padding: 20px 22px; box-shadow: var(--shadow); position: relative;
+  }
+  .reco .callout-label { color: var(--accent-ink); }
+  .reco h3 { margin-top: 0; color: var(--accent-ink); }
+  .reco p { color: var(--ink); margin: 0 0 8px; }
+  .reco p:last-child { margin-bottom: 0; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 26px; }
+    .feature-head { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<div class="eyebrow"><span class="dot"></span>Payroll · daf360-payroll-service &amp; daf360-payroll-frontend</div>
+<h1>Calibration Paie — état fonctionnel</h1>
+<p class="subtitle">Le mot « calibration » recouvre en réalité <strong>deux fonctionnalités distinctes</strong> côté backend, plus une conséquence indirecte. Cette note fait le point, module par module, sur ce qui est réellement construit avant tout travail de design frontend.</p>
+
+<div class="status-strip">
+  <div class="status-card">
+    <span class="label">Fonctionnalité A</span>
+    <span class="name">Cycle de calibration</span>
+    <span class="pill ok">Backend complet</span>
+    <span class="pill warn">UI existante, désactivée</span>
+  </div>
+  <div class="status-card">
+    <span class="label">Fonctionnalité B</span>
+    <span class="name">Import de précision</span>
+    <span class="pill gap">Backend incomplet</span>
+    <span class="pill gap">Aucune UI</span>
+  </div>
+  <div class="status-card">
+    <span class="label">Fonctionnalité C</span>
+    <span class="name">Sorties F.04 / F.07</span>
+    <span class="pill ok">Backend complet</span>
+    <span class="pill ok">Déjà branché au frontend</span>
+  </div>
+</div>
+
+<section class="feature">
+  <div class="feature-head">
+    <div>
+      <div class="feature-tag">Fonctionnalité A</div>
+      <h2>Cycle de calibration — coût chargé, prédit vs réel</h2>
+    </div>
+  </div>
+  <p class="feature-obj">Pour un pays et une période (<span class="mono">YYYY-MM</span>) donnés, compare ce que le moteur de simulation a <em>prédit</em> comme coût employeur chargé par employé, avec ce que le prestataire de paie externe a <em>réellement</em> facturé. C'est le contrôle « est-ce que notre moteur de calcul colle à la réalité du prestataire ? ».</p>
+
+  <h3>Classes</h3>
+  <div class="classes-box">
+    <p>Package <span class="mono">com.daf360.payroll.modules.calibration</span></p>
+    <p>Entités : <span class="mono">CalibrationCycle</span> (table <span class="mono">calibration_cycles</span>), <span class="mono">CalibrationVariance</span> (table <span class="mono">calibration_variances</span>)</p>
+    <p>Services : <span class="mono">CalibrationCycleService</span>, <span class="mono">PartnerPayrollParserService</span></p>
+    <p>Contrôleur : <span class="mono">CalibrationController</span> → <span class="mono">/api/payroll/calibration</span></p>
+  </div>
+
+  <h3>Points d'entrée REST</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Méthode</th><th>Chemin</th><th>Permission</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/calibration?paysId=</span></td><td>RUN_CALIBRATION / VIEW_AGGREGATE</td><td>Liste des cycles d'un pays, période la plus récente en premier</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/calibration/{id}</span></td><td>idem</td><td>Un cycle par id</td></tr>
+        <tr><td><span class="k-verb post">POST</span></td><td><span class="k-path">/calibration/open?paysId=&amp;period=</span></td><td>RUN_CALIBRATION</td><td>Ouvre un nouveau cycle (erreur si un cycle existe déjà pour ce couple pays/période)</td></tr>
+        <tr><td><span class="k-verb post">POST</span></td><td><span class="k-path">/calibration/{id}/upload-actuals</span></td><td>UPLOAD_ACTUAL</td><td>Upload multipart d'un CSV du prestataire, calcule les écarts et clôture le cycle</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/calibration/budget-lines?paysId=</span></td><td>RUN_CALIBRATION / VIEW_AGGREGATE / EXPORT_BUDGET / VIEW_BUDGET_AGGREGATE</td><td>Lignes de budget F.04 (Fonctionnalité C)</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/calibration/forecast-outputs?paysId=</span></td><td>idem</td><td>Projections F.07 (Fonctionnalité C)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Logique métier</h3>
+  <ol class="steps">
+    <li><p><strong>Ouverture d'un cycle</strong> — nécessite un <span class="mono">ParameterSet</span> actif pour le pays. Le montant prédit total (<span class="mono">predictedTotalLoadedCost</span>) vient de la dernière simulation de type <span class="mono">COHORT</span>.</p></li>
+    <li><p><strong>Upload du CSV des montants réels</strong> — colonnes <span class="mono">profileUserId,actualLoadedCost,contractType</span> (<span class="mono">contractType</span> facultatif, défaut <span class="mono">CDI</span> ; lignes malformées ignorées silencieusement). Un nouvel upload <strong>remplace</strong> le précédent, il ne s'ajoute pas.</p></li>
+    <li><p><strong>Calcul de l'écart</strong> — par employé : <span class="mono">varianceAmount = réel − prédit</span>, <span class="mono">variancePct</span> arrondi à 6 décimales (HALF_UP).</p></li>
+    <li><p><strong>Clôture automatique</strong> — il n'existe pas d'action « clôturer » séparée : l'upload du CSV clôture directement le cycle. Statut final <span class="mono">CLOSED</span> si l'écart global reste sous le seuil du <span class="mono">ParameterSet</span> (<span class="mono">calibrationThresholdPct</span>, 1&nbsp;% par défaut), sinon <span class="mono">REQUIRES_UPDATE</span>. Aucun chemin ne permet de rouvrir un cycle clôturé.</p></li>
+  </ol>
+
+  <h3>Champs des entités</h3>
+  <div class="fields-grid">
+    <div class="field-card">
+      <div class="table-name">Table <span class="k-field">calibration_cycles</span> — unique sur pays + période</div>
+      <div class="field-list">
+        <span class="k-field">id</span><span class="k-field">paysId</span><span class="k-field">period</span><span class="k-field">parameterSetId</span>
+        <span class="k-field">status</span><span class="k-field">predictedTotalLoadedCost</span><span class="k-field">actualTotalLoadedCost</span>
+        <span class="k-field">variancePct</span><span class="k-field">headcount</span><span class="k-field">closedAt</span>
+        <span class="k-field">closedBy</span><span class="k-field">notes</span><span class="k-field">createdBy</span><span class="k-field">createdAt</span>
+      </div>
+    </div>
+    <div class="field-card">
+      <div class="table-name">Table <span class="k-field">calibration_variances</span> — suppression en cascade depuis le cycle</div>
+      <div class="field-list">
+        <span class="k-field">id</span><span class="k-field">cycleId</span><span class="k-field">profileUserId</span><span class="k-field">predictedLoadedCost</span>
+        <span class="k-field">actualLoadedCost</span><span class="k-field">varianceAmount</span><span class="k-field">variancePct</span>
+        <span class="k-field">contractType</span><span class="k-field">sourceLine</span><span class="k-field">createdAt</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout gap">
+    <span class="callout-label">Lacune backend</span>
+    <p>Le détail par employé (<span class="mono">CalibrationVariance</span>) est bien stocké et le repository sait déjà le lire (<span class="mono">findByCycleId</span>), mais <strong>aucun endpoint ne l'expose</strong> — seul l'agrégat du cycle est renvoyé. Un tableau de détail par employé demandera un nouvel endpoint (pas une nouvelle table).</p>
+  </div>
+
+  <div class="callout warn">
+    <span class="callout-label">Frontend</span>
+    <p>Un écran <strong>complet et fonctionnel</strong> existe déjà : <span class="mono">src/app/modules/calibration/</span> (formulaire d'ouverture de cycle, upload CSV, tableau des cycles avec badges de statut), branché sur les vrais points d'entrée via <span class="mono">payroll-api.service.ts</span>. Il est simplement <strong>désactivé</strong> — route et entrée de menu commentées dans <span class="mono">app.routes.ts</span> / <span class="mono">payroll-nav.ts</span>, avec la consigne explicite de décommenter les deux fichiers ensemble, jamais un seul.</p>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="feature-head">
+    <div>
+      <div class="feature-tag">Fonctionnalité B</div>
+      <h2>Import de calibration — précision par rubrique</h2>
+    </div>
+  </div>
+  <p class="feature-obj">Distincte de la Fonctionnalité A. Compare, par pays et par période, les montants prédits <em>par rubrique de paie</em> (salaire brut, CNSS, IRPP, primes…) issus de <span class="mono">payroll_results</span>, avec des valeurs réelles importées. Calcule un KPI de précision globale et en suit l'évolution (alerte si la précision reste sous 95&nbsp;% pendant 2 mois consécutifs). Référence métier : tickets D3-256 / D3-258.</p>
+
+  <h3>Classes</h3>
+  <div class="classes-box">
+    <p>Entités : <span class="mono">CalibrationImport</span> (table <span class="mono">payroll_calibration_imports</span>), <span class="mono">CalibrationImportLine</span> (table <span class="mono">payroll_calibration_lines</span>), <span class="mono">PrecisionKpiHistory</span> (table <span class="mono">payroll_precision_kpi_history</span>)</p>
+    <p>Services : <span class="mono">CalibrationImportService</span>, <span class="mono">KpiHistoryService</span></p>
+    <p>Contrôleur : endpoints dans <span class="mono">PayrollEngineController</span> → <span class="mono">/api/payroll/engine/calibration*</span> (pas dans <span class="mono">CalibrationController</span>)</p>
+  </div>
+
+  <h3>Points d'entrée REST</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Méthode</th><th>Chemin</th><th>Permission</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><span class="k-verb post">POST</span></td><td><span class="k-path">/engine/calibration/open?paysId=&amp;period=&amp;paramSetId=</span></td><td>IMPORT_CALIBRATION</td><td>Crée un import, statut <span class="mono">PENDING</span>, échéance J+5 (~7 jours)</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/engine/calibration?paysId=</span></td><td>IMPORT_CALIBRATION / VIEW_PARAMSET</td><td>Liste des imports du pays</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/engine/calibration/{id}/lines</span></td><td>idem</td><td>Lignes d'écart par rubrique pour un import</td></tr>
+        <tr><td><span class="k-verb get">GET</span></td><td><span class="k-path">/engine/calibration/kpi?paysId=</span></td><td>idem</td><td>Historique du KPI de précision</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout gap">
+    <span class="callout-label">Lacune backend critique</span>
+    <p><span class="mono">CalibrationImportService.recordActuals(...)</span> — la méthode qui reçoit les valeurs réelles et calcule l'écart par rubrique — et <span class="mono">KpiHistoryService.record(importId)</span> — celle qui écrit une ligne d'historique KPI — <strong>ne sont appelées par aucun contrôleur</strong> (vérifié par recherche dans tout le code). Les endpoints « ouvrir » et « lister » existent, mais il n'y a <strong>aucun moyen de soumettre les valeurs réelles</strong> via l'API aujourd'hui.</p>
+    <p>Ce n'est pas seulement un manque de frontend : un écran « soumettre les valeurs réelles » n'aurait rien à appeler tant que ce trou backend n'est pas comblé.</p>
+  </div>
+
+  <h3>Ce que fait le code une fois branché (logique déjà écrite, juste inatteignable)</h3>
+  <ol class="steps">
+    <li><p>Reçoit une carte <span class="mono">code rubrique → montant réel</span>.</p></li>
+    <li><p>Construit les montants prédits en sommant <span class="mono">PayrollResult.rubriqueDetails</span> (JSON par résultat de paie), regroupés par rubrique, pour le même pays/période.</p></li>
+    <li><p>Par rubrique : <span class="mono">variance = réel − prédit</span>, <span class="mono">variancePct</span> (4 décimales, HALF_UP), marque <span class="mono">exceedsThreshold</span> si l'écart dépasse 1&nbsp;% (seuil fixe, non paramétrable ici, contrairement à la Fonctionnalité A).</p></li>
+    <li><p>Calcule un <span class="mono">globalPrecisionPct</span> et passe l'import à <span class="mono">REQUIRES_UPDATE</span> si une rubrique dépasse le seuil, sinon <span class="mono">COMPARISON_DONE</span>.</p></li>
+  </ol>
+
+  <h3>Champs des entités</h3>
+  <div class="fields-grid">
+    <div class="field-card">
+      <div class="table-name">Table <span class="k-field">payroll_calibration_imports</span> — unique sur pays + période</div>
+      <div class="field-list">
+        <span class="k-field">id</span><span class="k-field">countryId</span><span class="k-field">period</span><span class="k-field">importStatus</span>
+        <span class="k-field">importedAt</span><span class="k-field">importedBy</span><span class="k-field">fileName</span>
+        <span class="k-field">globalPrecisionPct</span><span class="k-field">parameterSetId</span><span class="k-field">triggeredAt</span><span class="k-field">deadlineJ5</span>
+      </div>
+    </div>
+    <div class="field-card">
+      <div class="table-name">Table <span class="k-field">payroll_calibration_lines</span></div>
+      <div class="field-list">
+        <span class="k-field">id</span><span class="k-field">importId</span><span class="k-field">rubriqueCode</span><span class="k-field">predictedAmount</span>
+        <span class="k-field">actualAmount</span><span class="k-field">varianceAmount</span><span class="k-field">variancePct</span>
+        <span class="k-field">exceedsThreshold</span><span class="k-field">createdAt</span>
+      </div>
+    </div>
+    <div class="field-card">
+      <div class="table-name">Table <span class="k-field">payroll_precision_kpi_history</span> — unique sur pays + période</div>
+      <div class="field-list">
+        <span class="k-field">id</span><span class="k-field">countryId</span><span class="k-field">period</span><span class="k-field">precisionPct</span>
+        <span class="k-field">thresholdPct</span><span class="k-field">belowThreshold</span><span class="k-field">consecutiveMonthsBelow</span>
+        <span class="k-field">alertSent</span><span class="k-field">importId</span><span class="k-field">calculatedAt</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout gap">
+    <span class="callout-label">Frontend</span>
+    <p>DTOs et méthodes de service existent dans <span class="mono">payroll-engine.service.ts</span> (<span class="mono">EngineCalibrationDto</span>, <span class="mono">openEngineCalibration</span>, <span class="mono">getCalibrationLines</span>, <span class="mono">getKpiHistory</span>…) mais <strong>ne sont consommés par aucun composant</strong>. Écran à construire entièrement, une fois la lacune backend ci-dessus comblée.</p>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="feature-head">
+    <div>
+      <div class="feature-tag">Fonctionnalité C</div>
+      <h2>Sorties F.04 / F.07 — effet de bord de la calibration</h2>
+    </div>
+  </div>
+  <p class="feature-obj">Ce n'est pas de la « calibration » au sens comparaison, mais ça vit dans le même package et se déclenche à partir des données de calibration.</p>
+
+  <h3>Ce qui se passe</h3>
+  <ol class="steps">
+    <li><p>Le service <span class="mono">CalibrationFinanceService</span> écoute l'évènement <span class="mono">ParameterSetActivatedEvent</span>, émis quand un <span class="mono">ParameterSet</span> termine son cycle d'approbation (<span class="mono">DRAFT → SUBMITTED → APPROVED_HR → APPROVED_FINANCE → ACTIVE → ARCHIVED</span>) et passe <span class="mono">ACTIVE</span>. Exécution <span class="mono">AFTER_COMMIT</span> dans une nouvelle transaction : un échec ici ne fait jamais annuler l'approbation.</p></li>
+    <li><p>Il récupère la période et le coût prédit du cycle de calibration le plus récent (<span class="mono">CLOSED</span> ou <span class="mono">REQUIRES_UPDATE</span>), ou à défaut de la dernière simulation COHORT.</p></li>
+    <li><p><strong>F.04</strong> — deux lignes de budget (<span class="mono">PayrollBudgetLine</span>) : <span class="mono">EMPLOYEE_NET</span> et <span class="mono">EMPLOYER_LOADED</span>, converties en EUR/CHF via <span class="mono">FxSnapshotService</span>.</p></li>
+    <li><p><strong>F.07</strong> — trois projections (<span class="mono">PayrollForecastOutput</span>) : <span class="mono">MONTHLY</span> / <span class="mono">QUARTERLY</span> (×3) / <span class="mono">ANNUAL</span> (×12).</p></li>
+  </ol>
+
+  <div class="callout ok">
+    <span class="callout-label">Frontend</span>
+    <p>Ces deux sorties sont exposées en lecture par <span class="mono">CalibrationController</span> (<span class="mono">/budget-lines</span>, <span class="mono">/forecast-outputs</span>) et <strong>déjà consommées</strong> par l'écran <span class="mono">budget</span> du frontend — lui aussi désactivé pour l'instant, mais fonctionnel.</p>
+  </div>
+</section>
+
+<section class="feature">
+  <div class="feature-head"><div><h2>Permissions en jeu</h2></div></div>
+  <p class="feature-obj">Toutes définies dans <span class="mono">com.daf360.payroll.security.PermissionCatalog</span> :</p>
+  <div class="perm-list">
+    <span class="perm-chip">PAYROLL_RUN_CALIBRATION</span>
+    <span class="perm-chip">PAYROLL_UPLOAD_ACTUAL</span>
+    <span class="perm-chip">PAYROLL_IMPORT_CALIBRATION</span>
+    <span class="perm-chip">PAYROLL_VIEW_AGGREGATE</span>
+    <span class="perm-chip">PAYROLL_VIEW_BUDGET_AGGREGATE</span>
+    <span class="perm-chip">PAYROLL_EXPORT_BUDGET</span>
+    <span class="perm-chip">PAYROLL_VIEW_PARAMSET</span>
+  </div>
+  <div class="callout warn" style="margin-top:16px;">
+    <span class="callout-label">À respecter dans l'UI</span>
+    <p><span class="mono">VIEW_BUDGET_AGGREGATE</span> est prévue pour un rôle type « Directeur pays » — agrégats uniquement, sans visibilité sur les salaires individuels. Ne pas exposer les <span class="mono">CalibrationVariance</span> par employé à ce rôle, même une fois l'endpoint de détail construit.</p>
+  </div>
+</section>
+
+<footer class="wrap">
+  <div class="reco">
+    <span class="callout-label">Recommandation</span>
+    <h3>Avant de designer quoi que ce soit</h3>
+    <p>Réactiver l'écran existant de la Fonctionnalité A (décommenter route + menu) et le tester contre le backend actuel, qui a pu évoluer depuis sa construction. Ça évite de reconstruire un écran qui existe déjà.</p>
+    <p>Pour la Fonctionnalité B, combler d'abord le trou backend (<span class="mono">recordActuals</span> / <span class="mono">KpiHistoryService.record</span> inatteignables) avant tout travail d'écran — sans endpoint pour soumettre les valeurs réelles, l'UI n'aurait rien à appeler.</p>
+  </div>
+</footer>

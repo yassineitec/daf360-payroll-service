@@ -2,6 +2,7 @@ package com.daf360.payroll.web;
 
 import com.daf360.payroll.engine.ConvergenceException;
 import com.daf360.payroll.engine.CyclicDependencyException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -46,6 +48,26 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleConflict(IllegalStateException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /** A "not found" thrown as a bare NoSuchElementException (ParameterSetService,
+     * EmployeePayrollConfigService) previously fell through to the generic 500 handler below —
+     * this restores the 404 both callers' own comments already claimed they'd get. */
+    @ExceptionHandler(NoSuchElementException.class)
+    public ProblemDetail handleNotFound(NoSuchElementException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /** A CHECK/UNIQUE constraint rejecting an otherwise well-formed request (e.g. an
+     * unrecognized contract_type code) is a client input problem, not a server fault — surface
+     * it as 400 instead of the opaque generic 500 below. */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setDetail("La requête viole une contrainte de données (valeur invalide ou doublon).");
         return pd;
     }
 
