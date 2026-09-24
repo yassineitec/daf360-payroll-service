@@ -84,6 +84,25 @@ public class PayrollEngineController {
         + PermissionCatalog.RUN_ENGINE + "')")
     public PayrollResultsSummaryDto getResultsSummary(@RequestParam Long paysId) {
         String currency = countryRepo.findByPaysId(paysId).map(PayrollCountry::getCurrencyCode).orElse(null);
+        return summarize(paysId, currency);
+    }
+
+    /**
+     * One summary per payroll country, each in its own currency and for its own latest
+     * period — the "all countries" KPI band. Amounts are NOT summed here: they are in
+     * different currencies, so the client converts each one before adding them up.
+     */
+    @GetMapping("/results/summary/all")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_RESULTS + "','"
+        + PermissionCatalog.RUN_ENGINE + "')")
+    public List<PayrollResultsSummaryDto> getAllResultsSummaries() {
+        return countryRepo.findAll().stream()
+            .map(c -> summarize(c.getPaysId(), c.getCurrencyCode()))
+            .toList();
+    }
+
+    private PayrollResultsSummaryDto summarize(Long paysId, String currency) {
         Optional<PayrollResult> latest = resultRepo.findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(paysId);
         if (latest.isEmpty()) {
             return new PayrollResultsSummaryDto(paysId, currency, null, null, 0,
