@@ -6,8 +6,10 @@ import com.daf360.payroll.modules.calibration.entity.PrecisionKpiHistory;
 import com.daf360.payroll.modules.calibration.service.CalibrationImportService;
 import com.daf360.payroll.modules.calibration.service.KpiHistoryService;
 import com.daf360.payroll.modules.calibration.service.ParameterSetWorkflowService;
+import com.daf360.payroll.modules.payroll.dto.PayrollResultsSummaryDto;
 import com.daf360.payroll.modules.payroll.dto.RunPayrollRequest;
 import com.daf360.payroll.modules.payroll.dto.RunPayrollResponse;
+import com.daf360.payroll.modules.payroll.entity.PayrollCountry;
 import com.daf360.payroll.modules.payroll.entity.PayrollParamSet;
 import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import com.daf360.payroll.modules.payroll.entity.PayrollRubriqueDef;
@@ -27,7 +29,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
 
 @RestController
 @RequestMapping("/api/payroll/engine")
@@ -64,6 +71,59 @@ public class PayrollEngineController {
     public ResponseEntity<RunPayrollResponse> run(
             @RequestBody @Valid RunPayrollRequest request) {
         return ResponseEntity.status(201).body(orchestrator.run(request));
+    }
+
+    /**
+     * Totals of the latest calculated period for one country (gross, net, loaded cost,
+     * convergence failures). Declared before {@code /results/{employeeId}} for
+     * readability only — Spring already prefers the literal segment over the variable.
+     */
+    @GetMapping("/results/summary")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_RESULTS + "','"
+        + PermissionCatalog.RUN_ENGINE + "')")
+    public PayrollResultsSummaryDto getResultsSummary(@RequestParam Long paysId) {
+        String currency = countryRepo.findByPaysId(paysId).map(PayrollCountry::getCurrencyCode).orElse(null);
+        return summarize(paysId, currency);
+    }
+
+    /**
+     * One summary per payroll country, each in its own currency and for its own latest
+     * period — the "all countries" KPI band. Amounts are NOT summed here: they are in
+     * different currencies, so the client converts each one before adding them up.
+     */
+    @GetMapping("/results/summary/all")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_RESULTS + "','"
+        + PermissionCatalog.RUN_ENGINE + "')")
+    public List<PayrollResultsSummaryDto> getAllResultsSummaries() {
+        return countryRepo.findAll().stream()
+            .map(c -> summarize(c.getPaysId(), c.getCurrencyCode()))
+            .toList();
+    }
+
+    private PayrollResultsSummaryDto summarize(Long paysId, String currency) {
+        Optional<PayrollResult> latest = resultRepo.findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(paysId);
+        if (latest.isEmpty()) {
+            return new PayrollResultsSummaryDto(paysId, currency, null, null, 0,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0, null);
+        }
+        int year = latest.get().getPeriodYear();
+        int month = latest.get().getPeriodMonth();
+        List<PayrollResult> rows = resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(paysId, year, month);
+        return new PayrollResultsSummaryDto(
+            paysId, currency, year, month,
+            rows.size(),
+            sum(rows, PayrollResult::getAggregateGross),
+            sum(rows, PayrollResult::getStrate5),
+            sum(rows, PayrollResult::getLoadedCost),
+            (int) rows.stream().filter(r -> !r.isConvergenceOk()).count(),
+            rows.stream().map(PayrollResult::getCalculatedAt).filter(Objects::nonNull)
+                .max(Comparator.naturalOrder()).orElse(null));
+    }
+
+    private static BigDecimal sum(List<PayrollResult> rows, Function<PayrollResult, BigDecimal> field) {
+        return rows.stream().map(field).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     @GetMapping("/results/{employeeId}")
