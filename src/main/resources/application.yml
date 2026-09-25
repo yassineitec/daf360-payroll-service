@@ -81,7 +81,7 @@ app:
   # travail du service (`mvn spring-boot:run` depuis `daf360-payroll-service/`) ; en
   # conteneur, JWT_PUBLIC_KEY_PATH=/app/keys/public.pem l'emporte comme avant.
   jwt-public-key-path: ${JWT_PUBLIC_KEY_PATH:../daf360-portal/keys/public.pem}
-  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8080,http://localhost:4205,http://localhost:4200}
+  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8080,http://localhost:4205,http://localhost:4200,http://localhost:4204}
   hr-api-base-url: ${HR_API_BASE_URL:http://localhost:8888}
   # ProfileSyncService reads `app.rh-service-url` via @Value, NOT hr-api-base-url.
   # It was never declared here, so it always fell back to the @Value default
@@ -90,6 +90,9 @@ app:
   rh-service-url: ${HR_API_BASE_URL:http://localhost:8888}
   pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
   hr-service-key: ${SERVICE_KEY:daf360-internal-key-change-in-prod}
+  # Same value as rh-service's INTERNAL_API_KEY — the salary-advance calls to RH (employee facts,
+  # notifications) are refused without it.
+  hr-internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
   mail-enabled: ${MAIL_ENABLED:false}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
   # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD

@@ -30,6 +30,13 @@ public final class PermissionCatalog {
     public static final String VIEW_BUDGET_AGGREGATE       = "PAYROLL_VIEW_BUDGET_AGGREGATE";
     public static final String VIEW_EMPLOYEE_CONFIG        = "PAYROLL_VIEW_EMPLOYEE_CONFIG";
     public static final String MANAGE_EMPLOYEE_CONFIG      = "PAYROLL_MANAGE_EMPLOYEE_CONFIG";
+    /** Salary advances: record the payout, reconcile the monthly deductions, follow-up, rules. */
+    public static final String MANAGE_SALARY_ADVANCES      = "PAYROLL_MANAGE_SALARY_ADVANCES";
+    /**
+     * Finance's decision on a salary advance. A FACT_ code (declared in FactPermissionCatalog):
+     * finance is the approval hub, payroll owns the data, so payroll-service checks it.
+     */
+    public static final String FACT_APPROVE_SALARY_ADVANCE = "FACT_APPROVE_SALARY_ADVANCE";
 
     /** All codes — used to validate PermissionCatalog entries in RH service. */
     public static final Set<String> ALL_CODES = Set.of(
@@ -38,7 +45,8 @@ public final class PermissionCatalog {
             VIEW_PARAMSET, UPLOAD_ACTUAL, SUPER_ADMIN,
             RUN_ENGINE, VIEW_RESULTS, MANAGE_RUBRIQUES, MANAGE_COUNTRIES,
             IMPORT_CALIBRATION, VIEW_BUDGET_AGGREGATE,
-            VIEW_EMPLOYEE_CONFIG, MANAGE_EMPLOYEE_CONFIG
+            VIEW_EMPLOYEE_CONFIG, MANAGE_EMPLOYEE_CONFIG,
+            MANAGE_SALARY_ADVANCES
     );
 
     /** Permissions that bypass pays isolation. */

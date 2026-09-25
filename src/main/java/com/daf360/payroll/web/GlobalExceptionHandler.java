@@ -86,6 +86,19 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(AccessDeniedException.class)
     public ProblemDetail handleForbidden(AccessDeniedException ex) {
+        // A refusal our own services raise on purpose (own advance, country out of scope…)
+        // carries a message meant for the user: pass it through instead of the generic
+        // "no rights" text, which sent people off re-granting permissions they already had.
+        // @PreAuthorize denials are a subclass (AuthorizationDeniedException) or, on older
+        // Spring Security, the literal "Access Denied" — those stay generic below.
+        if (ex.getClass() == AccessDeniedException.class && ex.getMessage() != null
+                && !"Access Denied".equals(ex.getMessage())) {
+            log.info("403 — règle métier : {}", ex.getMessage());
+            ProblemDetail rule = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+            rule.setDetail(ex.getMessage());
+            return rule;
+        }
+
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
 
         if (auth == null || !auth.isAuthenticated() || auth instanceof AnonymousAuthenticationToken) {
