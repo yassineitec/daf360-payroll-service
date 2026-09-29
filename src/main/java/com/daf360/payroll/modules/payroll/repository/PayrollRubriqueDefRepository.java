@@ -11,4 +11,7 @@ public interface PayrollRubriqueDefRepository extends JpaRepository<PayrollRubri
     List<PayrollRubriqueDef> findByCountryIdAndActiveTrue(Long countryId);
 
     Optional<PayrollRubriqueDef> findByCountryIdAndCode(Long countryId, String code);
+
+    /** Toutes les rubriques d'un pays, actives ou non — l'administration doit pouvoir réactiver. */
+    List<PayrollRubriqueDef> findByCountryIdOrderByDisplayOrderAscCodeAsc(Long countryId);
 }

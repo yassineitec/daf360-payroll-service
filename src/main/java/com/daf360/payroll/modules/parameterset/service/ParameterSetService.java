@@ -60,6 +60,17 @@ public class ParameterSetService {
 
     @Transactional
     public ParameterSetDto create(CreateParameterSetRequest req, Long createdBy) {
+        // Un barème illisible passerait la création et ferait échouer le calcul d'IRPP plus
+        // tard (IrppCalculatorService) : on le refuse ici, avec un message exploitable.
+        validateIrppBrackets(req.irppBrackets());
+        if (req.fiscalYear() < 2000 || req.fiscalYear() > 2100)
+            throw new IllegalArgumentException("Année fiscale invalide : 2000 à 2100");
+        if (req.maxConvergenceIterations() != null && req.maxConvergenceIterations() < 1)
+            throw new IllegalArgumentException("Nombre maximal d'itérations : au moins 1");
+        if (req.convergenceTolerance() != null && req.convergenceTolerance().signum() <= 0)
+            throw new IllegalArgumentException("Tolérance de convergence : strictement positive");
+        if (req.calibrationThresholdPct() != null && req.calibrationThresholdPct().signum() < 0)
+            throw new IllegalArgumentException("Seuil de calibration : positif ou nul");
         Integer nextVersion = paramSetRepo
                 .findTopByPaysIdOrderByVersionDesc(req.paysId())
                 .map(p -> p.getVersion() + 1)
@@ -106,14 +117,90 @@ public class ParameterSetService {
 
     @Transactional
     public ParameterSetDto updateSocialChargeRates(Long id, List<SocialChargeRateDto> rates) {
-        findOrThrow(id);
+        // Comme les avantages : un jeu soumis, actif ou archivé ne se modifie plus (409).
+        assertStatus(findOrThrow(id), "DRAFT");
         saveRates(id, rates);
         return toDto(findOrThrow(id));
     }
 
+    /**
+     * Remplace les avantages en nature d'un jeu. Réservé aux jeux en brouillon (DRAFT) : un
+     * jeu soumis, actif ou archivé a déjà été (ou est en train d'être) validé tel quel —
+     * le modifier contournerait l'approbation RH + Finance. Pour changer les avantages d'un
+     * jeu actif, on crée un nouveau jeu.
+     */
+    @Transactional
+    public ParameterSetDto updateBenefits(Long id, List<BenefitCatalogueDto> benefits) {
+        ParameterSet ps = findOrThrow(id);
+        assertStatus(ps, "DRAFT");
+        List<BenefitCatalogueDto> list = benefits == null ? List.of() : benefits;
+        java.util.Set<String> codes = new java.util.HashSet<>();
+        for (BenefitCatalogueDto b : list) {
+            if (b.benefitCode() == null || b.benefitCode().isBlank())
+                throw new IllegalArgumentException("Code d'avantage obligatoire");
+            if (!codes.add(b.benefitCode().trim().toUpperCase()))
+                throw new IllegalArgumentException("Code d'avantage en double : " + b.benefitCode().trim());
+            if (b.benefitLabelFr() == null || b.benefitLabelFr().isBlank())
+                throw new IllegalArgumentException("Libellé obligatoire pour l'avantage " + b.benefitCode().trim());
+            if (isNegative(b.monthlyValue()) || isNegative(b.employeeShare()) || isNegative(b.employerShare()))
+                throw new IllegalArgumentException("Montants négatifs interdits pour l'avantage " + b.benefitCode().trim());
+            if (b.valuationMethod() != null && !VALUATION_METHODS.contains(b.valuationMethod()))
+                throw new IllegalArgumentException("Méthode de valorisation inconnue : " + b.valuationMethod());
+        }
+        saveBenefits(id, list);
+        return toDto(findOrThrow(id));
+    }
+
+    private static final java.util.Set<String> VALUATION_METHODS = java.util.Set.of("TAX_AUTHORITY", "ACTUAL_COST");
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * Barème IRPP au format lu par {@code IrppCalculatorService} : tableau non vide de tranches
+     * {@code {lower, upper, rate}} ({@code min}/{@code max} acceptés), {@code upper} null pour la
+     * dernière, taux ≥ 0 (0,26 ou 26), tranches croissantes et sans chevauchement.
+     */
+    static void validateIrppBrackets(String raw) {
+        com.fasterxml.jackson.databind.JsonNode root;
+        try {
+            root = JSON.readTree(raw == null ? "" : raw);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalArgumentException("Barème IRPP : JSON invalide");
+        }
+        if (root == null || !root.isArray() || root.isEmpty())
+            throw new IllegalArgumentException("Barème IRPP : un tableau d'au moins une tranche est attendu");
+        BigDecimal previousUpper = null;
+        int n = 0;
+        for (com.fasterxml.jackson.databind.JsonNode b : root) {
+            n++;
+            com.fasterxml.jackson.databind.JsonNode lower = b.has("lower") ? b.get("lower") : b.get("min");
+            com.fasterxml.jackson.databind.JsonNode upper = b.has("upper") ? b.get("upper") : b.get("max");
+            com.fasterxml.jackson.databind.JsonNode rate = b.get("rate");
+            if (!b.isObject() || lower == null || !lower.isNumber() || rate == null || !rate.isNumber())
+                throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : « lower » et « rate » numériques obligatoires");
+            if (rate.decimalValue().signum() < 0)
+                throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : taux négatif");
+            if (upper != null && !upper.isNull()) {
+                if (!upper.isNumber())
+                    throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : « upper » doit être un nombre ou null");
+                if (upper.decimalValue().compareTo(lower.decimalValue()) <= 0)
+                    throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : « upper » doit dépasser « lower »");
+            } else if (n < root.size()) {
+                throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : seule la dernière tranche peut être sans limite");
+            }
+            if (previousUpper != null && lower.decimalValue().compareTo(previousUpper) < 0)
+                throw new IllegalArgumentException("Barème IRPP, tranche " + n + " : chevauche la tranche précédente");
+            previousUpper = upper == null || upper.isNull() ? null : upper.decimalValue();
+        }
+    }
+
+    private static boolean isNegative(java.math.BigDecimal v) {
+        return v != null && v.signum() < 0;
+    }
+
     @Transactional
     public ParameterSetDto updateRubriques(Long id, List<SavePayrollRubriqueRequest> rubriques) {
-        findOrThrow(id);
+        assertStatus(findOrThrow(id), "DRAFT");
         saveRubriques(id, rubriques);
         return toDto(findOrThrow(id));
     }
@@ -199,13 +286,14 @@ public class ParameterSetService {
         List<BenefitCatalogue> entities = dtos.stream().map(d -> {
             BenefitCatalogue b = new BenefitCatalogue();
             b.setParameterSetId(psId);
-            b.setBenefitCode(d.benefitCode());
-            b.setBenefitLabelFr(d.benefitLabelFr());
-            b.setBenefitLabelEn(d.benefitLabelEn());
+            b.setBenefitCode(d.benefitCode() == null ? null : d.benefitCode().trim());
+            b.setBenefitLabelFr(d.benefitLabelFr() == null ? null : d.benefitLabelFr().trim());
+            b.setBenefitLabelEn(d.benefitLabelEn() == null || d.benefitLabelEn().isBlank() ? null : d.benefitLabelEn().trim());
             b.setValuationMethod(d.valuationMethod() != null ? d.valuationMethod() : "TAX_AUTHORITY");
-            b.setMonthlyValue(d.monthlyValue());
-            b.setEmployeeShare(d.employeeShare());
-            b.setEmployerShare(d.employerShare());
+            // Colonnes NOT NULL : un montant non saisi vaut 0 (défaut de l'entité).
+            b.setMonthlyValue(d.monthlyValue() != null ? d.monthlyValue() : java.math.BigDecimal.ZERO);
+            b.setEmployeeShare(d.employeeShare() != null ? d.employeeShare() : java.math.BigDecimal.ZERO);
+            b.setEmployerShare(d.employerShare() != null ? d.employerShare() : java.math.BigDecimal.ZERO);
             b.setIsTaxable(d.isTaxable() != null ? d.isTaxable() : true);
             return b;
         }).toList();

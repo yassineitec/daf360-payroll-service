@@ -1,5 +1,6 @@
 package com.daf360.payroll.modules.calibration.service;
 
+import com.daf360.payroll.modules.admin.service.EngineConfigService;
 import com.daf360.payroll.modules.payroll.entity.PayrollParamSet;
 import com.daf360.payroll.modules.payroll.repository.PayrollParamSetRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -8,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Manages the DRAFT → SUBMITTED → APPROVED_HR → APPROVED_FINANCE → ACTIVE → ARCHIVED
@@ -17,14 +19,25 @@ import java.util.List;
 public class ParameterSetWorkflowService {
 
     private final PayrollParamSetRepository repo;
+    private final EngineConfigService engineConfig;
 
-    public ParameterSetWorkflowService(PayrollParamSetRepository repo) {
+    public ParameterSetWorkflowService(PayrollParamSetRepository repo, EngineConfigService engineConfig) {
         this.repo = repo;
+        this.engineConfig = engineConfig;
     }
 
+    /**
+     * Soumission d'un brouillon. Refusée (400) si une rubrique active du pays utilise une clé
+     * de paramètre absente du jeu : activé tel quel, il ferait échouer le calcul de paie.
+     */
     public PayrollParamSet submit(Long id, String submittedBy) {
         PayrollParamSet ps = findOrThrow(id);
         assertStatus(ps, "DRAFT");
+        Set<String> missing = engineConfig.missingKeys(ps.getCountryId(), ps.getParameters());
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Paramètres manquants, utilisés par des rubriques actives : " + String.join(", ", missing));
+        }
         ps.setStatus("SUBMITTED");
         ps.setSubmittedBy(submittedBy);
         ps.setSubmittedAt(OffsetDateTime.now());

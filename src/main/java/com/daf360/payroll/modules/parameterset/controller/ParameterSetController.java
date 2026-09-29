@@ -1,5 +1,6 @@
 package com.daf360.payroll.modules.parameterset.controller;
 
+import com.daf360.payroll.modules.parameterset.dto.BenefitCatalogueDto;
 import com.daf360.payroll.modules.parameterset.dto.CreateParameterSetRequest;
 import com.daf360.payroll.modules.parameterset.dto.ParameterSetDto;
 import com.daf360.payroll.modules.parameterset.dto.SavePayrollRubriqueRequest;
@@ -78,6 +79,14 @@ public class ParameterSetController {
     public ParameterSetDto updateSocialChargeRates(@PathVariable Long id,
             @RequestBody List<SocialChargeRateDto> rates) {
         return service.updateSocialChargeRates(id, rates);
+    }
+
+    /** Remplace les avantages en nature d'un jeu en brouillon (409 sinon). */
+    @PutMapping("/{id}/benefits")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.APPROVE_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET_FAST_TRACK + "')")
+    public ParameterSetDto updateBenefits(@PathVariable Long id,
+            @RequestBody List<BenefitCatalogueDto> benefits) {
+        return service.updateBenefits(id, benefits);
     }
 
     @PutMapping("/{id}/rubriques")
