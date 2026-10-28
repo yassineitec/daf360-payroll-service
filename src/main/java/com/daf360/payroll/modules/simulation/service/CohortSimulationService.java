@@ -59,6 +59,10 @@ public class CohortSimulationService {
 
         SimulationMode mode = req.mode() != null ? req.mode() : SimulationMode.NET_TO_BRUT;
 
+        // Resolve the FX snapshot ONCE for the whole batch — every employee in this cohort must
+        // get the same currency/rates, even if an admin edits payroll_countries mid-run.
+        FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
+
         List<SimulationResult> results = new ArrayList<>();
         BigDecimal totalLoadedCost = BigDecimal.ZERO;
 
@@ -107,13 +111,13 @@ public class CohortSimulationService {
             entity.setGrossWithBenefits(grossWithBen);
             entity.setCostNetRatio(ratio);
             entity.setLoadedCost(calc.loadedCost());
-            entity.setLocalCurrency(fxService.localCurrency(req.paysId()));
-            entity.setFxRateEur(fxService.eurRate(req.paysId()));
-            entity.setFxRateUsd(fxService.usdRate(req.paysId()));
-            entity.setFxRateChf(fxService.chfRate(req.paysId()));
-            entity.setLoadedCostEur(fxService.convertToEur(calc.loadedCost(), req.paysId()));
-            entity.setLoadedCostUsd(fxService.convertToUsd(calc.loadedCost(), req.paysId()));
-            entity.setLoadedCostChf(fxService.convertToChf(calc.loadedCost(), req.paysId()));
+            entity.setLocalCurrency(fx.currency());
+            entity.setFxRateEur(fx.eur());
+            entity.setFxRateUsd(fx.usd());
+            entity.setFxRateChf(fx.chf());
+            entity.setLoadedCostEur(fxService.convertToEur(calc.loadedCost(), fx));
+            entity.setLoadedCostUsd(fxService.convertToUsd(calc.loadedCost(), fx));
+            entity.setLoadedCostChf(fxService.convertToChf(calc.loadedCost(), fx));
             entity.setIrppAmount(calc.irppAmount());
             entity.setEmployeeCharges(calc.employeeCharges());
             entity.setEmployerCharges(calc.employerCharges());

@@ -134,13 +134,16 @@ public class IndividualSimulationService {
         entity.setGrossWithBenefits(grossWithBenefits);
         entity.setCostNetRatio(costNetRatio);
         entity.setLoadedCost(result.loadedCost());
-        entity.setLocalCurrency(fxService.localCurrency(req.paysId()));
-        entity.setFxRateEur(fxService.eurRate(req.paysId()));
-        entity.setFxRateUsd(fxService.usdRate(req.paysId()));
-        entity.setFxRateChf(fxService.chfRate(req.paysId()));
-        entity.setLoadedCostEur(fxService.convertToEur(result.loadedCost(), req.paysId()));
-        entity.setLoadedCostUsd(fxService.convertToUsd(result.loadedCost(), req.paysId()));
-        entity.setLoadedCostChf(fxService.convertToChf(result.loadedCost(), req.paysId()));
+        // Resolve the FX snapshot ONCE for this request — avoids re-querying payroll_countries
+        // per field.
+        FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
+        entity.setLocalCurrency(fx.currency());
+        entity.setFxRateEur(fx.eur());
+        entity.setFxRateUsd(fx.usd());
+        entity.setFxRateChf(fx.chf());
+        entity.setLoadedCostEur(fxService.convertToEur(result.loadedCost(), fx));
+        entity.setLoadedCostUsd(fxService.convertToUsd(result.loadedCost(), fx));
+        entity.setLoadedCostChf(fxService.convertToChf(result.loadedCost(), fx));
         entity.setIrppAmount(result.irppAmount());
         entity.setEmployeeCharges(result.employeeCharges());
         entity.setEmployerCharges(result.employerCharges());

@@ -100,24 +100,26 @@ public class CalibrationFinanceService {
                         .map(SimulationResult::getInputNet)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        String currency = fxService.localCurrency(paysId);
+        // Resolve the FX snapshot ONCE for this generation run instead of re-querying
+        // payroll_countries per line/forecast.
+        FxSnapshotService.FxSnapshot fx = fxService.resolve(paysId);
 
         // ── F.04 — create two budget lines ──
         budgetLineRepo.save(buildBudgetLine(ps, paysId, period, "EMPLOYER_LOADED",
-                employerLoaded, headcount, currency));
+                employerLoaded, headcount, fx));
 
         if (employeeNet != null) {
             budgetLineRepo.save(buildBudgetLine(ps, paysId, period, "EMPLOYEE_NET",
-                    employeeNet, headcount, currency));
+                    employeeNet, headcount, fx));
         }
 
         // ── F.07 — create three forecast outputs from EMPLOYER_LOADED ──
         forecastRepo.save(buildForecast(ps, paysId, period, "MONTHLY",
-                employerLoaded, BigDecimal.ONE, headcount, currency));
+                employerLoaded, BigDecimal.ONE, headcount, fx));
         forecastRepo.save(buildForecast(ps, paysId, period, "QUARTERLY",
-                employerLoaded, BigDecimal.valueOf(3), headcount, currency));
+                employerLoaded, BigDecimal.valueOf(3), headcount, fx));
         forecastRepo.save(buildForecast(ps, paysId, period, "ANNUAL",
-                employerLoaded, BigDecimal.valueOf(12), headcount, currency));
+                employerLoaded, BigDecimal.valueOf(12), headcount, fx));
 
         log.info("F.04/F.07 outputs created for parameterSetId={} period={} employerLoaded={}",
                 ps.getId(), period, employerLoaded);
@@ -136,24 +138,24 @@ public class CalibrationFinanceService {
 
     private PayrollBudgetLine buildBudgetLine(ParameterSet ps, Long paysId, String period,
                                                String lineType, BigDecimal monthly,
-                                               Integer headcount, String currency) {
+                                               Integer headcount, FxSnapshotService.FxSnapshot fx) {
         PayrollBudgetLine line = new PayrollBudgetLine();
         line.setParameterSetId(ps.getId());
         line.setPaysId(paysId);
         line.setPeriod(period);
         line.setLineType(lineType);
         line.setMonthlyAmount(monthly.setScale(4, RoundingMode.HALF_UP));
-        line.setMonthlyEur(fxService.convertToEur(monthly, paysId));
-        line.setMonthlyChf(fxService.convertToChf(monthly, paysId));
+        line.setMonthlyEur(fxService.convertToEur(monthly, fx));
+        line.setMonthlyChf(fxService.convertToChf(monthly, fx));
         line.setHeadcount(headcount);
-        line.setLocalCurrency(currency);
+        line.setLocalCurrency(fx.currency());
         return line;
     }
 
     private PayrollForecastOutput buildForecast(ParameterSet ps, Long paysId, String period,
                                                  String forecastType, BigDecimal monthly,
                                                  BigDecimal multiplier, Integer headcount,
-                                                 String currency) {
+                                                 FxSnapshotService.FxSnapshot fx) {
         BigDecimal amount = monthly.multiply(multiplier).setScale(4, RoundingMode.HALF_UP);
         PayrollForecastOutput f = new PayrollForecastOutput();
         f.setParameterSetId(ps.getId());
@@ -161,9 +163,9 @@ public class CalibrationFinanceService {
         f.setPeriod(period);
         f.setForecastType(forecastType);
         f.setForecastAmount(amount);
-        f.setForecastEur(fxService.convertToEur(amount, paysId));
-        f.setForecastChf(fxService.convertToChf(amount, paysId));
-        f.setLocalCurrency(currency);
+        f.setForecastEur(fxService.convertToEur(amount, fx));
+        f.setForecastChf(fxService.convertToChf(amount, fx));
+        f.setLocalCurrency(fx.currency());
         f.setHeadcount(headcount);
         return f;
     }

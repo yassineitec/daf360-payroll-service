@@ -23,9 +23,12 @@
 USE [DAF360_PAYROLL];
 GO
 
-ALTER TABLE payroll_countries ADD eur_rate DECIMAL(18,6) NULL;
-ALTER TABLE payroll_countries ADD usd_rate DECIMAL(18,6) NULL;
-ALTER TABLE payroll_countries ADD chf_rate DECIMAL(18,6) NULL;
+IF COL_LENGTH('dbo.payroll_countries', 'eur_rate') IS NULL
+    ALTER TABLE payroll_countries ADD eur_rate DECIMAL(18,6) NULL;
+IF COL_LENGTH('dbo.payroll_countries', 'usd_rate') IS NULL
+    ALTER TABLE payroll_countries ADD usd_rate DECIMAL(18,6) NULL;
+IF COL_LENGTH('dbo.payroll_countries', 'chf_rate') IS NULL
+    ALTER TABLE payroll_countries ADD chf_rate DECIMAL(18,6) NULL;
 GO
 
 UPDATE payroll_countries SET eur_rate = 0.300, usd_rate = 0.325, chf_rate = 0.316 WHERE pays_id = 179;

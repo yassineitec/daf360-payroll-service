@@ -203,4 +203,88 @@ class FxSnapshotServiceTest {
 
         assertEquals(0, new BigDecimal("900.0000").compareTo(result));
     }
+
+    // ── resolve() + FxSnapshot-based conversions ────────────────────────────────
+
+    @Test
+    void resolve_activeRowWithAllFields_returnsSnapshotMatchingDbValues() {
+        when(countryRepo.findByPaysIdAndActiveTrue(PAYS_ID)).thenReturn(Optional.of(countryWithAllFields()));
+
+        FxSnapshotService.FxSnapshot fx = service.resolve(PAYS_ID);
+
+        assertEquals("USD", fx.currency());
+        assertEquals(new BigDecimal("0.900"), fx.eur());
+        assertEquals(new BigDecimal("1.000"), fx.usd());
+        assertEquals(new BigDecimal("0.850"), fx.chf());
+    }
+
+    @Test
+    void resolve_noRowAtAll_fallsBackToYamlForEveryField() {
+        when(countryRepo.findByPaysIdAndActiveTrue(PAYS_ID)).thenReturn(Optional.empty());
+
+        FxSnapshotService.FxSnapshot fx = service.resolve(PAYS_ID);
+
+        assertEquals("TND", fx.currency());
+        assertEquals(new BigDecimal("0.300"), fx.eur());
+        assertEquals(new BigDecimal("0.325"), fx.usd());
+        assertEquals(new BigDecimal("0.316"), fx.chf());
+    }
+
+    @Test
+    void convertToEur_withSnapshot_usesSnapshotRate_whenPresent() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot(
+                "USD", new BigDecimal("0.900"), new BigDecimal("1.000"), new BigDecimal("0.850"));
+
+        BigDecimal result = service.convertToEur(new BigDecimal("1000"), fx);
+
+        assertEquals(0, new BigDecimal("900.0000").compareTo(result));
+    }
+
+    @Test
+    void convertToUsd_withSnapshot_usesSnapshotRate_whenPresent() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot(
+                "USD", new BigDecimal("0.900"), new BigDecimal("1.000"), new BigDecimal("0.850"));
+
+        BigDecimal result = service.convertToUsd(new BigDecimal("1000"), fx);
+
+        assertEquals(0, new BigDecimal("1000.0000").compareTo(result));
+    }
+
+    @Test
+    void convertToChf_withSnapshot_usesSnapshotRate_whenPresent() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot(
+                "USD", new BigDecimal("0.900"), new BigDecimal("1.000"), new BigDecimal("0.850"));
+
+        BigDecimal result = service.convertToChf(new BigDecimal("1000"), fx);
+
+        assertEquals(0, new BigDecimal("850.0000").compareTo(result));
+    }
+
+    @Test
+    void convertToEur_withSnapshot_nullRate_returnsNull() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot("TND", null, null, null);
+
+        assertNull(service.convertToEur(new BigDecimal("1000"), fx));
+    }
+
+    @Test
+    void convertToUsd_withSnapshot_nullRate_returnsNull() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot("TND", null, null, null);
+
+        assertNull(service.convertToUsd(new BigDecimal("1000"), fx));
+    }
+
+    @Test
+    void convertToChf_withSnapshot_nullRate_returnsNull() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot("TND", null, null, null);
+
+        assertNull(service.convertToChf(new BigDecimal("1000"), fx));
+    }
+
+    @Test
+    void convertToEur_withSnapshot_zeroRate_returnsNull() {
+        FxSnapshotService.FxSnapshot fx = new FxSnapshotService.FxSnapshot("TND", BigDecimal.ZERO, null, null);
+
+        assertNull(service.convertToEur(new BigDecimal("1000"), fx));
+    }
 }

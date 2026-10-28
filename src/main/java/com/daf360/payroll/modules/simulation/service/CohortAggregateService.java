@@ -42,6 +42,10 @@ public class CohortAggregateService {
         List<BenefitCatalogue> benefits  = paramSetService.loadBenefits(ps.getId());
         List<PayrollRubrique>  rubriques = paramSetService.loadRubriques(ps.getId());
 
+        // Resolve the FX snapshot ONCE for this request instead of re-querying
+        // payroll_countries per field/conversion.
+        FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
+
         // Fetch active employees from HR service
         List<HrEmployeeDto> employees = hrClient.fetchActiveEmployees(req.paysId());
 
@@ -53,8 +57,7 @@ public class CohortAggregateService {
                 .toList();
 
         if (filtered.isEmpty()) {
-            String currency = fxService.localCurrency(req.paysId());
-            return emptyResponse(req, currency);
+            return emptyResponse(req, fx.currency());
         }
 
         String modType = req.modifierType() != null ? req.modifierType().toUpperCase() : "PCT";
@@ -88,19 +91,17 @@ public class CohortAggregateService {
         BigDecimal deltaMonthly = projectedTotal.subtract(currentTotal).setScale(4, RoundingMode.HALF_UP);
         BigDecimal deltaAnnual  = deltaMonthly.multiply(BigDecimal.valueOf(12)).setScale(4, RoundingMode.HALF_UP);
 
-        String currency = fxService.localCurrency(req.paysId());
-
         return new CohortAggregateResponse(
                 successCount,
                 currentTotal.setScale(4, RoundingMode.HALF_UP),
                 projectedTotal.setScale(4, RoundingMode.HALF_UP),
                 deltaMonthly,
                 deltaAnnual,
-                fxService.convertToEur(currentTotal,   req.paysId()),
-                fxService.convertToEur(projectedTotal, req.paysId()),
-                fxService.convertToChf(currentTotal,   req.paysId()),
-                fxService.convertToChf(projectedTotal, req.paysId()),
-                currency,
+                fxService.convertToEur(currentTotal,   fx),
+                fxService.convertToEur(projectedTotal, fx),
+                fxService.convertToChf(currentTotal,   fx),
+                fxService.convertToChf(projectedTotal, fx),
+                fx.currency(),
                 modType,
                 modVal,
                 req

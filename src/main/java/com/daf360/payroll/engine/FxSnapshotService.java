@@ -88,4 +88,32 @@ public class FxSnapshotService {
         if (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) return null;
         return localAmount.multiply(rate).setScale(4, RoundingMode.HALF_UP);
     }
+
+    /** Immutable snapshot of a pays's currency/rates, resolved once per logical unit of work
+     *  (e.g. once per cohort batch, not once per employee) so that every entity produced by
+     *  that run is consistent even if an admin edits payroll_countries mid-run. */
+    public record FxSnapshot(String currency, BigDecimal eur, BigDecimal usd, BigDecimal chf) {}
+
+    /** Resolves the currency/rates for a pays ONCE. Callers that process many entities for the
+     *  same paysId in a single request/loop should call this once and reuse the result via the
+     *  {@code FxSnapshot}-based overloads below, instead of calling {@link #localCurrency},
+     *  {@link #eurRate}, {@link #usdRate} and {@link #chfRate} per-entity. */
+    public FxSnapshot resolve(Long paysId) {
+        return new FxSnapshot(localCurrency(paysId), eurRate(paysId), usdRate(paysId), chfRate(paysId));
+    }
+
+    public BigDecimal convertToEur(BigDecimal localAmount, FxSnapshot fx) {
+        if (fx.eur() == null || fx.eur().compareTo(BigDecimal.ZERO) == 0) return null;
+        return localAmount.multiply(fx.eur()).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    public BigDecimal convertToUsd(BigDecimal localAmount, FxSnapshot fx) {
+        if (fx.usd() == null || fx.usd().compareTo(BigDecimal.ZERO) == 0) return null;
+        return localAmount.multiply(fx.usd()).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    public BigDecimal convertToChf(BigDecimal localAmount, FxSnapshot fx) {
+        if (fx.chf() == null || fx.chf().compareTo(BigDecimal.ZERO) == 0) return null;
+        return localAmount.multiply(fx.chf()).setScale(4, RoundingMode.HALF_UP);
+    }
 }
