@@ -11,5 +11,8 @@ public record SavePayrollCountryRequest(
         String currencyCode,
         Integer fiscalYearStartMonth,
         String forexApiSources,
-        Boolean active
+        Boolean active,
+        java.math.BigDecimal eurRate,
+        java.math.BigDecimal usdRate,
+        java.math.BigDecimal chfRate
 ) {}

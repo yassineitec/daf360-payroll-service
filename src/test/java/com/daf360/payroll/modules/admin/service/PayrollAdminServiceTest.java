@@ -142,7 +142,12 @@ class PayrollAdminServiceTest {
     // ── Pays de paie : création / modification ──────────────────────────────
 
     private static SavePayrollCountryRequest countryReq(Long paysId, String currency, Integer month, String forex) {
-        return new SavePayrollCountryRequest(paysId, currency, month, forex, true);
+        return new SavePayrollCountryRequest(paysId, currency, month, forex, true, null, null, null);
+    }
+
+    private static SavePayrollCountryRequest countryReqWithRates(Long paysId, String currency, Integer month,
+                                                                   BigDecimal eur, BigDecimal usd, BigDecimal chf) {
+        return new SavePayrollCountryRequest(paysId, currency, month, null, true, eur, usd, chf);
     }
 
     @Test
@@ -187,6 +192,49 @@ class PayrollAdminServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TND", 1, "{pas du json")));
         assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TND", 1, "\"texte\"")));
         verify(countryRepo, never()).save(any());
+    }
+
+    @Test
+    void updateCountry_rejectsNonPositiveRates() {
+        when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(179L)));
+        when(countryRepo.findById(1L)).thenReturn(Optional.of(country(1L, 179L, "TND")));
+
+        assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L,
+                countryReqWithRates(null, "TND", 1, BigDecimal.ZERO, new BigDecimal("0.325"), new BigDecimal("0.316"))));
+        assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L,
+                countryReqWithRates(null, "TND", 1, new BigDecimal("0.300"), new BigDecimal("-1"), new BigDecimal("0.316"))));
+        assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L,
+                countryReqWithRates(null, "TND", 1, new BigDecimal("0.300"), new BigDecimal("0.325"), BigDecimal.ZERO)));
+        verify(countryRepo, never()).save(any());
+    }
+
+    @Test
+    void updateCountry_savesTheThreeRates_whenValid() {
+        when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(179L)));
+        when(countryRepo.findById(1L)).thenReturn(Optional.of(country(1L, 179L, "TND")));
+        when(paysRefRepo.findById(179L)).thenReturn(Optional.of(pays(179L, "TN", "Tunisie")));
+        when(countryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PayrollCountryDto dto = service.updateCountry(1L,
+                countryReqWithRates(null, "TND", 1, new BigDecimal("0.300"), new BigDecimal("0.325"), new BigDecimal("0.316")));
+
+        assertEquals(new BigDecimal("0.300"), dto.eurRate());
+        assertEquals(new BigDecimal("0.325"), dto.usdRate());
+        assertEquals(new BigDecimal("0.316"), dto.chfRate());
+    }
+
+    @Test
+    void updateCountry_nullRates_areAcceptedAsNoDbOverride() {
+        when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(179L)));
+        when(countryRepo.findById(1L)).thenReturn(Optional.of(country(1L, 179L, "TND")));
+        when(paysRefRepo.findById(179L)).thenReturn(Optional.of(pays(179L, "TN", "Tunisie")));
+        when(countryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PayrollCountryDto dto = service.updateCountry(1L, countryReq(null, "TND", 1, null));
+
+        assertNull(dto.eurRate());
+        assertNull(dto.usdRate());
+        assertNull(dto.chfRate());
     }
 
     private static PaysRef pays(Long id, String iso, String label) {

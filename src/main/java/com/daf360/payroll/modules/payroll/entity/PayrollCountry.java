@@ -21,6 +21,15 @@ public class PayrollCountry {
     @Column(name = "currency_code", nullable = false, length = 3)
     private String currencyCode;
 
+    @Column(name = "eur_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal eurRate;
+
+    @Column(name = "usd_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal usdRate;
+
+    @Column(name = "chf_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal chfRate;
+
     @Column(name = "fiscal_year_start_month", nullable = false)
     private int fiscalYearStartMonth = 1;
 

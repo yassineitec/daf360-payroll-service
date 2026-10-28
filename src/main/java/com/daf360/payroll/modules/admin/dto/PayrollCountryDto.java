@@ -15,5 +15,8 @@ public record PayrollCountryDto(
         int fiscalYearStartMonth,
         String forexApiSources,
         boolean active,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        java.math.BigDecimal eurRate,
+        java.math.BigDecimal usdRate,
+        java.math.BigDecimal chfRate
 ) {}

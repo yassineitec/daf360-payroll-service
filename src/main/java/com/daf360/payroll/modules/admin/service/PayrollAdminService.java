@@ -26,6 +26,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -111,6 +112,12 @@ public class PayrollAdminService {
         int month = req.fiscalYearStartMonth() == null ? 1 : req.fiscalYearStartMonth();
         if (month < 1 || month > 12)
             throw new IllegalArgumentException("Premier mois de l'exercice invalide : 1 à 12");
+        if (req.eurRate() != null && req.eurRate().compareTo(BigDecimal.ZERO) <= 0)
+            throw new IllegalArgumentException("Taux EUR invalide : doit être strictement positif");
+        if (req.usdRate() != null && req.usdRate().compareTo(BigDecimal.ZERO) <= 0)
+            throw new IllegalArgumentException("Taux USD invalide : doit être strictement positif");
+        if (req.chfRate() != null && req.chfRate().compareTo(BigDecimal.ZERO) <= 0)
+            throw new IllegalArgumentException("Taux CHF invalide : doit être strictement positif");
         String forex = req.forexApiSources() == null || req.forexApiSources().isBlank() ? null : req.forexApiSources().trim();
         if (forex != null) {
             try {
@@ -125,6 +132,9 @@ public class PayrollAdminService {
         c.setFiscalYearStartMonth(month);
         c.setForexApiSources(forex);
         c.setActive(req.active() != null && req.active());
+        c.setEurRate(req.eurRate());
+        c.setUsdRate(req.usdRate());
+        c.setChfRate(req.chfRate());
     }
 
     /** Même règle de périmètre que les règles d'avances : le corps de la requête échappe à
@@ -198,6 +208,7 @@ public class PayrollAdminService {
                 p == null ? null : p.getFrenchLabel(),
                 p == null ? null : p.getIsoCode(),
                 c.getCurrencyCode(), c.getFiscalYearStartMonth(), c.getForexApiSources(),
-                c.isActive(), c.getCreatedAt());
+                c.isActive(), c.getCreatedAt(),
+                c.getEurRate(), c.getUsdRate(), c.getChfRate());
     }
 }
