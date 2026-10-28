@@ -89,35 +89,28 @@ app:
   # same env var so one setting drives every HR call.
   rh-service-url: ${HR_API_BASE_URL:http://localhost:8888}
   pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
-  hr-service-key: ${SERVICE_KEY:daf360-internal-key-change-in-prod}
-  # Same value as rh-service's INTERNAL_API_KEY — the salary-advance calls to RH (employee facts,
-  # notifications) are refused without it.
+  # Same value as rh-service's INTERNAL_API_KEY — every HR-calling client in this service
+  # (salary advances, employee-profile sync) is refused without it.
   hr-internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
   mail-enabled: ${MAIL_ENABLED:false}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
-  # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD
-  # Tunisia (179):       1 TND ≈ 0.300 EUR, 0.325 USD
-  # Egypt   (53):        1 EGP ≈ 0.019 EUR, 0.021 USD
-  # France  (62):        1 EUR ≈ 1.000 EUR, 1.090 USD
-  # Saudi Arabia (152):  1 SAR ≈ 0.250 EUR, 0.267 USD
-  # UAE (185):           1 AED ≈ 0.250 EUR, 0.272 USD
   # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD / CHF
-  # Tunisia (179):       1 TND ≈ 0.300 EUR, 0.325 USD, 0.316 CHF
-  # Egypt   (53):        1 EGP ≈ 0.019 EUR, 0.021 USD, 0.020 CHF
+  # Tunisia (179) ARX default is EUR (not TND): 1 EUR = 1.000 EUR, 1.090 USD, 1.055 CHF
+  # Egypt   (53)  ARX default is USD (not EGP): 1 USD = 0.917 EUR, 1.000 USD, 0.968 CHF
   # France  (62):        1 EUR ≈ 1.000 EUR, 1.090 USD, 1.055 CHF
   # Saudi Arabia (152):  1 SAR ≈ 0.250 EUR, 0.267 USD, 0.264 CHF
   # UAE (185):           1 AED ≈ 0.250 EUR, 0.272 USD, 0.264 CHF
   fx-rates:
     "179":
-      currency: TND
-      eur: ${FX_TND_EUR:0.300}
-      usd: ${FX_TND_USD:0.325}
-      chf: ${FX_TND_CHF:0.316}
+      currency: EUR
+      eur: ${FX_TUNISIA_EUR:1.000}
+      usd: ${FX_TUNISIA_USD:1.090}
+      chf: ${FX_TUNISIA_CHF:1.055}
     "53":
-      currency: EGP
-      eur: ${FX_EGP_EUR:0.019}
-      usd: ${FX_EGP_USD:0.021}
-      chf: ${FX_EGP_CHF:0.020}
+      currency: USD
+      eur: ${FX_EGYPT_EUR:0.917}
+      usd: ${FX_EGYPT_USD:1.000}
+      chf: ${FX_EGYPT_CHF:0.968}
     "62":
       currency: EUR
       eur: ${FX_EUR_EUR:1.0}
