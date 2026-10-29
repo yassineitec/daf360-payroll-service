@@ -44,7 +44,7 @@ public class ProfileSyncService {
     @Value("${app.rh-service-url:http://localhost:8888}")
     private String rhServiceUrl;
 
-    @Value("${app.facturation-service-url:http://localhost:8891}")
+    @Value("${app.facturation-service-url:http://localhost:8892}")
     private String facturationServiceUrl;
 
     public ProfileSyncService(RestTemplate restTemplate,
