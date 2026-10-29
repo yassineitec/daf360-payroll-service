@@ -90,6 +90,7 @@ public class PayrollAdminService {
             throw new IllegalStateException("Ce pays est déjà configuré dans le moteur de paie");
         PayrollCountry c = new PayrollCountry();
         c.setPaysId(req.paysId());
+        c.setCurrencyCode(validateCurrency(req.currencyCode()));
         apply(c, req);
         return toDto(countryRepo.save(c), pays);
     }
@@ -106,9 +107,6 @@ public class PayrollAdminService {
     }
 
     private void apply(PayrollCountry c, SavePayrollCountryRequest req) {
-        String currency = req.currencyCode() == null ? "" : req.currencyCode().trim().toUpperCase();
-        if (!currency.matches("[A-Z]{3}"))
-            throw new IllegalArgumentException("Devise invalide : code ISO de 3 lettres attendu (ex. TND)");
         int month = req.fiscalYearStartMonth() == null ? 1 : req.fiscalYearStartMonth();
         if (month < 1 || month > 12)
             throw new IllegalArgumentException("Premier mois de l'exercice invalide : 1 à 12");
@@ -128,13 +126,25 @@ public class PayrollAdminService {
                 throw new IllegalArgumentException("Sources de change : JSON invalide");
             }
         }
-        c.setCurrencyCode(currency);
         c.setFiscalYearStartMonth(month);
         c.setForexApiSources(forex);
         c.setActive(req.active() != null && req.active());
         c.setEurRate(req.eurRate());
         c.setUsdRate(req.usdRate());
         c.setChfRate(req.chfRate());
+    }
+
+    /** Only called from createCountry() -- a brand-new row needs an initial currency from
+     *  somewhere, and for a country with no facturation entity to sync from (not one of the 13
+     *  ARX entities) this manual value is the only source there'll ever be. updateCountry()
+     *  deliberately never calls this: currency_code is now managed centrally in facturation's
+     *  admin screen and kept in sync by ProfileSyncService.syncEntityCurrencies(), so an edit
+     *  here would just get silently overwritten at the next 15-minute sync anyway. */
+    private String validateCurrency(String raw) {
+        String currency = raw == null ? "" : raw.trim().toUpperCase();
+        if (!currency.matches("[A-Z]{3}"))
+            throw new IllegalArgumentException("Devise invalide : code ISO de 3 lettres attendu (ex. TND)");
+        return currency;
     }
 
     /** Même règle de périmètre que les règles d'avances : le corps de la requête échappe à

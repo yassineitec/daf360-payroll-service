@@ -184,10 +184,12 @@ class PayrollAdminServiceTest {
 
     @Test
     void updateCountry_rejectsBadValues() {
+        // currencyCode is intentionally NOT asserted here anymore: updateCountry() no longer
+        // validates or touches it at all (frozen -- see updateCountry_ignoresCurrencyCodeInRequest
+        // below), so a malformed currency in the request is simply ignored, not rejected.
         when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(179L)));
         when(countryRepo.findById(1L)).thenReturn(Optional.of(country(1L, 179L, "TND")));
 
-        assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TN", 1, null)));
         assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TND", 13, null)));
         assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TND", 1, "{pas du json")));
         assertThrows(IllegalArgumentException.class, () -> service.updateCountry(1L, countryReq(null, "TND", 1, "\"texte\"")));
@@ -235,6 +237,38 @@ class PayrollAdminServiceTest {
         assertNull(dto.eurRate());
         assertNull(dto.usdRate());
         assertNull(dto.chfRate());
+    }
+
+    @Test
+    void updateCountry_ignoresCurrencyCodeInRequest() {
+        // currency_code is now centrally managed from facturation's admin screen and kept in
+        // sync by ProfileSyncService.syncEntityCurrencies() every 15 minutes -- a manual edit
+        // here must no longer take effect, or it would just get silently overwritten anyway.
+        when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(179L)));
+        PayrollCountry existing = country(1L, 179L, "EUR");
+        when(countryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(paysRefRepo.findById(179L)).thenReturn(Optional.of(pays(179L, "TN", "Tunisie")));
+        when(countryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PayrollCountryDto dto = service.updateCountry(1L, countryReq(null, "TND", 1, null));
+
+        assertEquals("EUR", existing.getCurrencyCode());
+        assertEquals("EUR", dto.currencyCode());
+    }
+
+    @Test
+    void createCountry_stillSetsCurrencyCodeFromRequest() {
+        // createCountry() is the one path that still needs a manual currency: a brand-new row
+        // for a country that is not one of the 13 ARX entities has no facturation entity to
+        // sync from, so this request value is the only source there will ever be.
+        when(userContext.getCurrentUserPaysScope()).thenReturn(PaysScopeContext.PaysScope.of(Set.of(53L)));
+        when(paysRefRepo.findById(53L)).thenReturn(Optional.of(pays(53L, "EG", "Égypte")));
+        when(countryRepo.findByPaysId(53L)).thenReturn(Optional.empty());
+        when(countryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PayrollCountryDto dto = service.createCountry(countryReq(53L, "usd", 1, null));
+
+        assertEquals("USD", dto.currencyCode());
     }
 
     private static PaysRef pays(Long id, String iso, String label) {

@@ -88,6 +88,12 @@ app:
   # (localhost:8888) and HR_API_BASE_URL had no effect. Both now resolve from the
   # same env var so one setting drives every HR call.
   rh-service-url: ${HR_API_BASE_URL:http://localhost:8888}
+  # ProfileSyncService also polls facturation's entities-for-sync endpoint every 15 minutes
+  # (the 13 real ARX entities) to keep payroll_countries.currency_code and payroll's own
+  # pays_ref.devise shadow in sync with facturation's admin-managed value, instead of being
+  # independently hand-maintained. FACTURATION_SERVICE_URL needs a real value per deployment
+  # environment (dev/test/pprod), same as HR_API_BASE_URL already does.
+  facturation-service-url: ${FACTURATION_SERVICE_URL:http://localhost:8891}
   pdf-service-url: ${PDF_SERVICE_URL:http://localhost:3000}
   # Same value as rh-service's INTERNAL_API_KEY — every HR-calling client in this service
   # (salary advances, employee-profile sync) is refused without it.
