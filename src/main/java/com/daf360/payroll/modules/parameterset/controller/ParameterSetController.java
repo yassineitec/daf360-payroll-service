@@ -7,11 +7,15 @@ import com.daf360.payroll.modules.parameterset.dto.SavePayrollRubriqueRequest;
 import com.daf360.payroll.modules.parameterset.dto.SocialChargeRateDto;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.ref.service.UserContextService;
+import com.daf360.payroll.security.PaysScopeContext;
 import com.daf360.payroll.security.PermissionCatalog;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -40,10 +44,33 @@ public class ParameterSetController {
         return service.getActiveByPays(paysId);
     }
 
+    /**
+     * Un jeu par son id. Ouvert aussi à RUN_SIMULATION (comme `/active`) : la fiche d'une
+     * simulation affiche les taux et le barème du jeu qui a servi au calcul
+     * (`simulation.parameterSetId`) — un jeu ACTIF ou ARCHIVÉ n'est plus modifiable, ce sont
+     * donc exactement ceux du calcul.
+     *
+     * Contrôle du pays ici : l'id passe dans le chemin, pas en `paysId`, donc le
+     * `PaysIsolationInterceptor` ne le voit pas.
+     */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET + "')")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET
+            + "','" + PermissionCatalog.RUN_SIMULATION + "')")
     public ParameterSetDto getById(@PathVariable Long id) {
-        return service.getById(id);
+        ParameterSetDto ps = service.getById(id);
+        if (!isSuperAdmin()) {
+            PaysScopeContext.PaysScope scope = userContext.getCurrentUserPaysScope();
+            if (ps.paysId() == null || scope == null || !scope.allows(ps.paysId())) {
+                throw new AccessDeniedException("Jeu de paramètres hors de votre périmètre pays");
+            }
+        }
+        return ps;
+    }
+
+    private static boolean isSuperAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "PAYROLL_SUPER_ADMIN".equals(a.getAuthority()));
     }
 
     @PostMapping

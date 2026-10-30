@@ -46,7 +46,7 @@ public class ContextLoader {
                 paramSet.getParameters(),
                 new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            throw new IllegalStateException("Cannot parse parameter set parameters JSON", e);
+            throw new IllegalStateException("Paramètres du jeu de paramètres : JSON illisible", e);
         }
 
         // 4. Build context

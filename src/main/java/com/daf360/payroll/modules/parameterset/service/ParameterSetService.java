@@ -329,7 +329,7 @@ public class ParameterSetService {
 
     private ParameterSet findOrThrow(Long id) {
         return paramSetRepo.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("ParameterSet not found: " + id));
+                .orElseThrow(() -> new NoSuchElementException("Jeu de paramètres introuvable : " + id));
     }
 
     private void assertStatus(ParameterSet ps, String expected) {

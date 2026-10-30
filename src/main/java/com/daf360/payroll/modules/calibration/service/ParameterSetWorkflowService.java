@@ -92,7 +92,7 @@ public class ParameterSetWorkflowService {
 
     private PayrollParamSet findOrThrow(Long id) {
         return repo.findById(id)
-            .orElseThrow(() -> new EntityNotFoundException("PayrollParamSet not found: " + id));
+            .orElseThrow(() -> new EntityNotFoundException("Jeu de paramètres introuvable : " + id));
     }
 
     private void assertStatus(PayrollParamSet ps, String expected) {

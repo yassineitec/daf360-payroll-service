@@ -1,6 +1,7 @@
 package com.daf360.payroll.modules.payroll.orchestrator;
 
 import com.daf360.payroll.engine.TopologicalEvaluator;
+import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollConfigRepository;
 import com.daf360.payroll.modules.parameterset.entity.SocialChargeRate;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.payroll.calculator.ExecutionContext;
@@ -21,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +52,7 @@ public class PayrollOrchestrator {
     private final PayrollCountryRepository countryRepo;
     private final TopologicalEvaluator topologicalEvaluator;
     private final ParameterSetService parameterSetService;
+    private final EmployeePayrollConfigRepository employeeConfigRepo;
 
     public PayrollOrchestrator(ContextLoader contextLoader,
                                 SequenceValidator sequenceValidator,
@@ -60,7 +63,8 @@ public class PayrollOrchestrator {
                                 PayrollRubriqueDefRepository rubriqueRepo,
                                 PayrollCountryRepository countryRepo,
                                 TopologicalEvaluator topologicalEvaluator,
-                                ParameterSetService parameterSetService) {
+                                ParameterSetService parameterSetService,
+                                EmployeePayrollConfigRepository employeeConfigRepo) {
         this.contextLoader = contextLoader;
         this.sequenceValidator = sequenceValidator;
         this.dispatcher = dispatcher;
@@ -71,6 +75,7 @@ public class PayrollOrchestrator {
         this.countryRepo = countryRepo;
         this.topologicalEvaluator = topologicalEvaluator;
         this.parameterSetService = parameterSetService;
+        this.employeeConfigRepo = employeeConfigRepo;
     }
 
     @Transactional
@@ -91,6 +96,10 @@ public class PayrollOrchestrator {
 
         // 3. Validate sequence (no forward references)
         sequenceValidator.validate(rubriques);
+
+        // 3b. Salaire de base DU COLLABORATEUR (« Salaires des collaborateurs ») à la place du
+        //     montant unique du jeu de paramètres — voir applyEmployeeBaseSalary.
+        applyEmployeeBaseSalary(ctx, rubriques, request.getEmployeeId());
 
         // 4. Execute each rubrique in order
         List<RubriqueResultItem> results = new ArrayList<>();
@@ -115,6 +124,7 @@ public class PayrollOrchestrator {
             RubriqueResultItem item = RubriqueResultItem.builder()
                 .rubriqueCode(rubrique.getCode())
                 .labelFr(rubrique.getLabelFr())
+                .labelEn(rubrique.getLabelEn())
                 .nature(rubrique.getNature())
                 .strate(rubrique.getStrate())
                 .assiette(rubrique.getAssietteCode() != null
@@ -128,6 +138,14 @@ public class PayrollOrchestrator {
 
             // After each rubrique, refresh strate aggregates in context
             aggregator.aggregate(results, ctx);
+        }
+
+        // 4b. Pays dont toutes les rubriques sont en strate 1 : le crochet de la boucle n'a pas
+        //     injecté les charges — on le fait AVANT d'enregistrer, pour que le résultat porte
+        //     les vraies charges patronales (CHARGES_ER, lues par ResultPersister).
+        if (!chargesInjected && ctx.hasVariable("BRUT")) {
+            injectChargeVariables(ctx, request.getPaysId(), contractType, joursTravailes);
+            chargesInjected = true;
         }
 
         // 5. Persist result — all fields set before the single INSERT; no UPDATE follows
@@ -145,12 +163,7 @@ public class PayrollOrchestrator {
             // forex snapshot failure must never abort a payroll run
         }
 
-        // 8. Build response — inject charges for any country where all rubriques are strate-1
-        // (edge case: no strate-2+ rubrique exists, so the loop hook never fired)
-        if (!chargesInjected && ctx.hasVariable("BRUT")) {
-            injectChargeVariables(ctx, request.getPaysId(), contractType, joursTravailes);
-        }
-
+        // 8. Build response (charges déjà injectées à l'étape 4b si besoin).
         return RunPayrollResponse.builder()
             .resultId(saved.getId())
             .employeeId(saved.getEmployeeId())
@@ -212,5 +225,53 @@ public class PayrollOrchestrator {
         } catch (Exception e) {
             log.warn("injectChargeVariables: skipped for paysId={} — {}", paysId, e.getMessage());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Salaire de base du collaborateur
+    // -----------------------------------------------------------------------
+
+    /** Code habituel de la rubrique « salaire de base » du moteur (strate 1). */
+    static final String BASE_SALARY_RUBRIQUE = "SALAIRE_BASE";
+
+    /**
+     * Remplace, pour CE calcul, le montant du salaire de base lu dans le jeu de paramètres
+     * (une valeur unique pour tout le pays, ex. {@code SALAIRE_BASE_MONTANT = 1200}) par le
+     * salaire brut enregistré pour le collaborateur dans « Salaires des collaborateurs »
+     * ({@code employee_payroll_config.current_gross_salary}).
+     *
+     * <p>La rubrique concernée est {@value #BASE_SALARY_RUBRIQUE} si elle existe, sinon la
+     * première rubrique de strate 1 en mode {@code MONTANT_FIXE} dans l'ordre du bulletin : le
+     * code est proposé à partir du libellé (« Salaire de base » → SALAIRE_DE_BASE), il ne doit
+     * pas décider du résultat. Sa clé de montant est surchargée dans la copie des paramètres
+     * propre à ce calcul (le jeu de paramètres enregistré n'est pas modifié). Sans
+     * configuration ou sans salaire saisi, la valeur du jeu de paramètres reste utilisée.
+     */
+    private void applyEmployeeBaseSalary(ExecutionContext ctx, List<PayrollRubriqueDef> rubriques, Long employeeId) {
+        if (employeeId == null) return;
+        BigDecimal gross = employeeConfigRepo.findByProfileUserId(employeeId)
+            .map(c -> c.getCurrentGrossSalary())
+            .filter(g -> g != null && g.signum() > 0)
+            .orElse(null);
+        if (gross == null) {
+            log.info("applyEmployeeBaseSalary: pas de salaire configuré pour l'employé {} — montant du jeu de paramètres", employeeId);
+            return;
+        }
+        baseSalaryRubrique(rubriques)
+            .ifPresent(r -> {
+                ctx.getParameters().put(r.getParamKeyTaux(), gross);
+                log.debug("applyEmployeeBaseSalary: employé {} — {} = {}", employeeId, r.getParamKeyTaux(), gross);
+            });
+    }
+
+    /** {@value #BASE_SALARY_RUBRIQUE}, sinon le premier montant fixe de strate 1 ({@code rubriques} est trié par ordre). */
+    static Optional<PayrollRubriqueDef> baseSalaryRubrique(List<PayrollRubriqueDef> rubriques) {
+        List<PayrollRubriqueDef> fixedBase = rubriques.stream()
+            .filter(r -> r.getStrate() == 1 && "MONTANT_FIXE".equals(r.getModeCalcul()) && r.getParamKeyTaux() != null)
+            .toList();
+        return fixedBase.stream()
+            .filter(r -> BASE_SALARY_RUBRIQUE.equals(r.getCode()))
+            .findFirst()
+            .or(() -> fixedBase.stream().findFirst());
     }
 }

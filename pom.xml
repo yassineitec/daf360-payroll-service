@@ -110,6 +110,13 @@
 			<groupId>org.apache.httpcomponents.client5</groupId>
 			<artifactId>httpclient5</artifactId>
 		</dependency>
+ 
+		<!-- ── Apache POI : export Excel de la fiche de simulation (même version que facturation) ── -->
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>5.4.1</version>
+		</dependency>
 
 		<!-- ── Dev tools ─────────────────────────────────────────────── -->
 		<dependency>

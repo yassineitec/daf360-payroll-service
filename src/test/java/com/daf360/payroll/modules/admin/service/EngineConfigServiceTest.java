@@ -160,6 +160,52 @@ class EngineConfigServiceTest {
         verify(rubriqueRepo, never()).save(any());
     }
 
+    private static SaveEngineRubriqueRequest rubrique(String code, String mode, String assiette, String taux, String bareme, String formula) {
+        return new SaveEngineRubriqueRequest(code, "Libellé", null, 3, "RETENUE", mode, assiette,
+            taux, null, bareme, formula, null, null, false, 10, true);
+    }
+
+    private static PayrollRubriqueDef existing(String code) {
+        PayrollRubriqueDef r = new PayrollRubriqueDef();
+        r.setCode(code);
+        return r;
+    }
+
+    @Test
+    void createRubrique_rateOrScaleWithoutBase_isRefused() {
+        lenient().when(rubriqueRepo.findByCountryIdAndCode(any(), any())).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> service.createRubrique(179L, rubrique("A", "TAUX_PCT", null, "CNSS_TAUX", null, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.createRubrique(179L, rubrique("B", "BAREME_PROGRESSIF", null, null, "IRPP", null)));
+        verify(rubriqueRepo, never()).save(any());
+    }
+
+    @Test
+    void createRubrique_unknownBaseOrFormulaCode_isRefused() {
+        lenient().when(rubriqueRepo.findByCountryIdAndCode(any(), any())).thenReturn(Optional.empty());
+        when(rubriqueRepo.findByCountryIdOrderByDisplayOrderAscCodeAsc(1L))
+            .thenReturn(List.of(existing("SALAIRE_DE_BASE"), existing("CNSS_SALARIE"), existing("IRPP")));
+
+        assertThrows(IllegalArgumentException.class,
+            () -> service.createRubrique(179L, rubrique("A", "TAUX_PCT", "SALAIRE_BASE", "CNSS_TAUX", null, null)));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> service.createRubrique(179L, rubrique("NET", "FORMULE", null, null, null, "SALAIRE_BASE - CNSS_SALARIE - IRPP")));
+        assertEquals("Code inconnu dans la formule : SALAIRE_BASE", e.getMessage());
+        verify(rubriqueRepo, never()).save(any());
+    }
+
+    @Test
+    void createRubrique_formulaWithKnownCodesChargesAndSystemVariables_isSaved() {
+        when(rubriqueRepo.findByCountryIdAndCode(1L, "NET")).thenReturn(Optional.empty());
+        when(rubriqueRepo.findByCountryIdOrderByDisplayOrderAscCodeAsc(1L))
+            .thenReturn(List.of(existing("SALAIRE_DE_BASE"), existing("IRPP")));
+
+        PayrollRubriqueDef r = service.createRubrique(179L,
+            rubrique("NET", "FORMULE", null, null, null, "T(java.lang.Math).max(0, SALAIRE_DE_BASE - CNSS_EE - IRPP) + STRATE_2 * JOURS_OUVRES / 22"));
+
+        assertEquals("NET", r.getCode());
+    }
+
     @Test
     void createRubrique_duplicateCode_isRefused() {
         when(rubriqueRepo.findByCountryIdAndCode(1L, "CNSS_EE")).thenReturn(Optional.of(new PayrollRubriqueDef()));

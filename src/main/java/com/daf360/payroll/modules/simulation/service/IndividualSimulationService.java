@@ -204,7 +204,8 @@ public class IndividualSimulationService {
         return null;
     }
 
-    private SimulationResultDto toDto(SimulationResult e) {
+    /** Public : réutilisé par {@code SimulationHistoryService} pour la fiche par id. */
+    public SimulationResultDto toDto(SimulationResult e) {
         return new SimulationResultDto(
                 e.getId(), e.getPaysId(), e.getProfileUserId(), e.getParameterSetId(),
                 e.getSimulationType(), e.getContractType(),

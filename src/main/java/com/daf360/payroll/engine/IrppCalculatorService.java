@@ -67,7 +67,7 @@ public class IrppCalculatorService {
         try {
             return objectMapper.readValue(json, BRACKET_TYPE);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid irpp_brackets JSON: " + e.getMessage(), e);
+            throw new IllegalArgumentException("Barème IRPP (irpp_brackets) : JSON invalide — " + e.getMessage(), e);
         }
     }
 

@@ -17,10 +17,14 @@ import java.util.stream.Collectors;
 @Service
 public class SequenceValidator {
 
-    /** System variable names that are always available in context at run start. */
+    /**
+     * System variable names that are always available in context: run start (ContextLoader)
+     * and strate totals refreshed after each rubrique (SystemVariableAggregator).
+     */
     private static final Set<String> SYSTEM_VARS = Set.of(
         "JOURS_OUVRES", "MOIS", "ANNEE",
-        "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5"
+        "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
+        "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER"
     );
 
     public void validate(List<PayrollRubriqueDef> rubriques) {

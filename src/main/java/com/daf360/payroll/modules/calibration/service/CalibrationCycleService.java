@@ -86,7 +86,7 @@ public class CalibrationCycleService {
                                               Long closedBy) {
         CalibrationCycle cycle = findOrThrow(cycleId);
         if (!"OPEN".equals(cycle.getStatus())) {
-            throw new IllegalStateException("Cycle is not OPEN: " + cycleId);
+            throw new IllegalStateException("Le cycle de calibration n'est pas ouvert : " + cycleId);
         }
 
         // Collect predicted costs per employee from the latest cohort simulation
@@ -166,7 +166,7 @@ public class CalibrationCycleService {
 
     private CalibrationCycle findOrThrow(Long id) {
         return cycleRepo.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("CalibrationCycle not found: " + id));
+                .orElseThrow(() -> new NoSuchElementException("Cycle de calibration introuvable : " + id));
     }
 
     private CalibrationCycleDto toDto(CalibrationCycle c) {

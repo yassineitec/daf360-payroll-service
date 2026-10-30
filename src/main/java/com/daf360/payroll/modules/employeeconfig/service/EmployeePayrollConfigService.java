@@ -165,7 +165,7 @@ public class EmployeePayrollConfigService {
         try {
             return objectMapper.writeValueAsString(codes);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid benefit codes", e);
+            throw new IllegalArgumentException("Codes d'avantages invalides", e);
         }
     }
 

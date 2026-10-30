@@ -110,7 +110,9 @@ public class PayrollEngineController {
         }
         int year = latest.get().getPeriodYear();
         int month = latest.get().getPeriodMonth();
-        List<PayrollResult> rows = resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(paysId, year, month);
+        // Dernier calcul de chaque collaborateur seulement : un mois relancé ne compte qu'une fois.
+        List<PayrollResult> rows = PayrollResultRepository.latestPerEmployee(
+            resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(paysId, year, month));
         return new PayrollResultsSummaryDto(
             paysId, currency, year, month,
             rows.size(),
