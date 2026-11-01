@@ -19,8 +19,7 @@ import java.util.Map;
 
 /**
  * Builds a printable HTML simulation sheet and converts it to PDF via the pdf-service.
- * If the pdf-service is unavailable the HTML bytes are returned directly so the caller
- * can serve them as text/html for browser-side printing.
+ * If the pdf-service is unavailable a {@link PdfGenerationException} is thrown (503).
  */
 @Slf4j
 @Service
@@ -44,18 +43,19 @@ public class SimulationPdfService {
     }
 
     /**
-     * Returns PDF bytes if the pdf-service is reachable, otherwise returns the HTML
-     * as UTF-8 bytes so the frontend can open it in a new tab for printing.
+     * Renvoie les octets du PDF produit par le pdf-service. Comme les exports PDF de la
+     * facturation, un échec lève {@link PdfGenerationException} (503 côté HTTP) : il n'y a plus
+     * de repli HTML, que le front enregistrait sous un nom en `.pdf` illisible.
      */
-    public PdfOrHtmlResult export(Long simulationId) {
+    public byte[] export(Long simulationId) {
         SimulationResult r = resultRepo.findById(simulationId)
-                .orElseThrow(() -> new EntityNotFoundException("Simulation not found: " + simulationId));
+                .orElseThrow(() -> new EntityNotFoundException("Simulation introuvable : " + simulationId));
 
         String html = buildHtml(r);
         String filename = "simulation-" + simulationId + ".pdf";
+        String url = appProperties.getPdfServiceUrl() + "/pdf/api/render";
 
         try {
-            String url = appProperties.getPdfServiceUrl() + "/pdf/api/render";
             byte[] pdfBytes = restClient.post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -63,18 +63,15 @@ public class SimulationPdfService {
                     .retrieve()
                     .body(byte[].class);
 
-            if (pdfBytes != null && pdfBytes.length > 0) {
-                return new PdfOrHtmlResult(pdfBytes, "application/pdf", filename);
+            if (pdfBytes == null || pdfBytes.length == 0) {
+                throw new PdfGenerationException("Réponse vide du service de génération PDF");
             }
+            return pdfBytes;
         } catch (RestClientException ex) {
-            log.warn("pdf-service unavailable for simulation {}: {} — returning HTML", simulationId, ex.getMessage());
+            log.warn("pdf-service unavailable for simulation {} ({}): {}", simulationId, url, ex.getMessage());
+            throw new PdfGenerationException("Service de génération PDF indisponible", ex);
         }
-
-        return new PdfOrHtmlResult(html.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                "text/html;charset=UTF-8", "simulation-" + simulationId + ".html");
     }
-
-    public record PdfOrHtmlResult(byte[] bytes, String contentType, String filename) {}
 
     // ── HTML builder ──────────────────────────────────────────────────────────
 

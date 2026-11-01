@@ -21,12 +21,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Écritures de l'administration paie sur la configuration du MOTEUR de paie — celle que le
@@ -51,6 +54,21 @@ public class EngineConfigService {
     /** Modes de calcul connus du moteur (un calculateur par mode, cf. CalculationDispatcher). */
     public static final Set<String> MODES = Set.of(
             "TAUX_PCT", "MONTANT_FIXE", "BAREME_PROGRESSIF", "ANNUALISE_BAREME", "FORMULE", "NEWTON_RAPHSON");
+
+    /** Modes qui appliquent un taux ou un barème à un montant de base. */
+    private static final Set<String> ASSIETTE_MODES = Set.of("TAUX_PCT", "BAREME_PROGRESSIF", "ANNUALISE_BAREME");
+
+    /**
+     * Variables toujours présentes au calcul (ContextLoader, SystemVariableAggregator,
+     * charges injectées par l'orchestrateur, SELF du calcul inverse).
+     */
+    private static final Set<String> SYSTEM_VARIABLES = Set.of(
+            "JOURS_OUVRES", "MOIS", "ANNEE",
+            "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
+            "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "SELF");
+
+    /** Noms en majuscules d'une formule, hors appels de méthode (T(…), .max(…)). */
+    private static final Pattern FORMULA_NAME = Pattern.compile("(?<![\\w.])([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final SpelExpressionParser SPEL = new SpelExpressionParser();
@@ -206,22 +224,35 @@ public class EngineConfigService {
             }
             default -> { }
         }
+        String assiette = trim(req.assietteCode());
+        if (assiette != null && assiette.length() > 20) throw new IllegalArgumentException("Code d'assiette trop long (20 max)");
+        // Sans montant de base, un pourcentage ou un barème vaut toujours 0 au calcul.
+        if (ASSIETTE_MODES.contains(mode)) require(assiette, "Mode " + mode + " : montant de base obligatoire");
         if (formula != null) {
             if (formula.length() > 1000) throw new IllegalArgumentException("Formule trop longue (1000 max)");
             try {
-                // Les noms de variables (STRATE_1, SELF…) se lisent comme des références :
-                // on ne vérifie ici que la syntaxe de l'expression.
                 SPEL.parseExpression(formula);
             } catch (ParseException e) {
                 throw new IllegalArgumentException("Formule invalide : " + e.getMessage());
+            }
+        }
+        if (assiette != null || formula != null) {
+            // Un nom inconnu n'est pas remplacé au calcul : la ligne vaudrait 0 sans message.
+            Set<String> known = knownVariables(r);
+            if (assiette != null && !isKnown(assiette, known))
+                throw new IllegalArgumentException("Montant de base inconnu : " + assiette);
+            if (formula != null) {
+                Set<String> unknown = new TreeSet<>();
+                Matcher m = FORMULA_NAME.matcher(formula);
+                while (m.find()) if (!isKnown(m.group(1), known)) unknown.add(m.group(1));
+                if (!unknown.isEmpty())
+                    throw new IllegalArgumentException("Code inconnu dans la formule : " + String.join(", ", unknown));
             }
         }
         String contracts = trim(req.contractTypeFilter());
         if (contracts != null && contracts.length() > 200) throw new IllegalArgumentException("Filtre de contrats trop long (200 max)");
         String periodicite = trim(req.periodicite());
         if (periodicite != null && periodicite.length() > 20) throw new IllegalArgumentException("Périodicité trop longue (20 max)");
-        String assiette = trim(req.assietteCode());
-        if (assiette != null && assiette.length() > 20) throw new IllegalArgumentException("Code d'assiette trop long (20 max)");
         int order = req.displayOrder() == null ? 0 : req.displayOrder();
         if (order < 0) throw new IllegalArgumentException("Ordre d'affichage négatif");
 
@@ -264,6 +295,21 @@ public class EngineConfigService {
             }
         }
         return missing;
+    }
+
+    /** Noms qu'un montant de base ou une formule peut utiliser : variables du calcul et codes des rubriques du pays. */
+    private Set<String> knownVariables(PayrollRubriqueDef r) {
+        Set<String> known = new HashSet<>(SYSTEM_VARIABLES);
+        if (r.getCode() != null) known.add(r.getCode());
+        if (r.getCountryId() != null)
+            rubriqueRepo.findByCountryIdOrderByDisplayOrderAscCodeAsc(r.getCountryId())
+                    .forEach(other -> known.add(other.getCode()));
+        return known;
+    }
+
+    /** Les cotisations des Règles de paie arrivent au calcul sous {CODE}_EE et {CODE}_ER. */
+    private static boolean isKnown(String name, Set<String> known) {
+        return known.contains(name) || name.endsWith("_EE") || name.endsWith("_ER");
     }
 
     private PayrollCountry countryOf(Long paysId) {

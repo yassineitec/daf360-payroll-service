@@ -47,7 +47,7 @@ public class EmployeePayrollBonusService {
     public void delete(Long profileUserId, Long bonusId) {
         EmployeePayrollBonus bonus = repo.findById(bonusId)
                 .filter(b -> b.getProfileUserId().equals(profileUserId))
-                .orElseThrow(() -> new java.util.NoSuchElementException("Bonus not found: " + bonusId));
+                .orElseThrow(() -> new java.util.NoSuchElementException("Prime introuvable : " + bonusId));
         repo.deleteById(bonus.getId());
     }
 

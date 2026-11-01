@@ -2,6 +2,8 @@ package com.daf360.payroll.web;
 
 import com.daf360.payroll.engine.ConvergenceException;
 import com.daf360.payroll.engine.CyclicDependencyException;
+import com.daf360.payroll.modules.simulation.service.PdfGenerationException;
+import jakarta.persistence.EntityNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -37,6 +39,14 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** pdf-service injoignable ou réponse vide — message lisible plutôt qu'un 500 générique. */
+    @ExceptionHandler(PdfGenerationException.class)
+    public ProblemDetail handlePdfGeneration(PdfGenerationException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleBadRequest(IllegalArgumentException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
@@ -56,6 +66,15 @@ public class GlobalExceptionHandler {
      * this restores the 404 both callers' own comments already claimed they'd get. */
     @ExceptionHandler(NoSuchElementException.class)
     public ProblemDetail handleNotFound(NoSuchElementException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /** Même 404 pour un `findById(...).orElseThrow(EntityNotFoundException)` — p. ex. une
+     *  simulation ouverte par son URL (`/payroll/simulator/:id`) qui n'existe plus. */
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ProblemDetail handleEntityNotFound(EntityNotFoundException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
         pd.setDetail(ex.getMessage());
         return pd;

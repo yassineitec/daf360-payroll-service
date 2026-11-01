@@ -48,7 +48,7 @@ public class PartnerPayrollParserService {
                 }
             }
         } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to parse partner payroll CSV: " + e.getMessage(), e);
+            throw new IllegalArgumentException("Lecture du CSV de paie partenaire impossible : " + e.getMessage(), e);
         }
         return rows;
     }

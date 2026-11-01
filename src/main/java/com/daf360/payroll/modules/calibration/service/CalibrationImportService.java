@@ -156,8 +156,9 @@ public class CalibrationImportService {
             return Map.of();
         }
 
-        var results = payrollResultRepo.findByCountryIdAndPeriodYearAndPeriodMonth(
-                imp.getCountryId(), year, month);
+        // Dernier calcul de chaque collaborateur seulement : un mois relancé ne compte qu'une fois.
+        var results = PayrollResultRepository.latestPerEmployee(
+                payrollResultRepo.findByCountryIdAndPeriodYearAndPeriodMonth(imp.getCountryId(), year, month));
 
         if (results.isEmpty()) {
             log.info("No payroll_results found for countryId={} period={} — calibration will compare against zero",

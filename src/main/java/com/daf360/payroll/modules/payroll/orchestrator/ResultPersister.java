@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -65,12 +66,20 @@ public class ResultPersister {
 
         BigDecimal strate1 = nvl(ctx.getVariable("STRATE_1"));
         BigDecimal strate2 = nvl(ctx.getVariable("STRATE_2"));
-        BigDecimal strate3 = nvl(ctx.getVariable("STRATE_3"));
-        result.setAggregateGross(strate1.add(strate2));
+        BigDecimal gross = strate1.add(strate2);
+        // Charges PATRONALES : CHARGES_ER, injecté par l'orchestrateur depuis les taux du jeu de
+        // paramètres actif (TopologicalEvaluator, voir PayrollOrchestrator#injectChargeVariables).
+        // Auparavant STRATE_3 était enregistré ici — c'est la CNSS SALARIALE (retenue sur le
+        // salaire), pas une charge de l'employeur : le coût employeur s'en trouvait faux.
+        // Sans taux employeur chargés (aucun jeu actif), la charge vaut 0 : le coût = le brut.
+        BigDecimal employerCharges = ctx.hasVariable("CHARGES_ER")
+            ? nvl(ctx.getVariable("CHARGES_ER")).setScale(2, RoundingMode.HALF_UP)
+            : BigDecimal.ZERO;
+        result.setAggregateGross(gross);
         result.setAggregateNet(nvl(ctx.getVariable("STRATE_5")));
-        result.setAggregateEmployerCharges(strate3);
+        result.setAggregateEmployerCharges(employerCharges);
         result.setAggregateIrpp(ctx.getVariable("IRPP"));
-        result.setLoadedCost(strate1.add(strate2).add(strate3));
+        result.setLoadedCost(gross.add(employerCharges));
 
         try {
             result.setRubriqueDetails(objectMapper.writeValueAsString(items));

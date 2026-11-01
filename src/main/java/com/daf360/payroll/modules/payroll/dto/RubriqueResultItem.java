@@ -19,6 +19,8 @@ public class RubriqueResultItem {
 
     /** French label for display in payslips. */
     private String labelFr;
+    /** English label, null when the rubrique has none (results computed before it was added lack it too). */
+    private String labelEn;
 
     /** Nature of the rubrique: GAIN | RETENUE | COTISATION | TAXE | AVANTAGE */
     private String nature;
