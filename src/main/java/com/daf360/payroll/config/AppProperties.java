@@ -16,11 +16,10 @@ public class AppProperties {
     private String jwtPublicKeyPath = "";
     private List<String> allowedOrigins = List.of("http://localhost:8080", "http://localhost:4205", "http://localhost:4200");
     private String hrApiBaseUrl    = "http://daf360-rh-backend:8888";
-    private String hrServiceKey    = "";
     /**
      * The X-Internal-Key rh-service checks on /api/hr/internal/** (its own app.internal-api-key,
-     * env INTERNAL_API_KEY). Used by the salary-advance client — NOT the same secret as
-     * hrServiceKey, which the older payroll-sync client sends as X-Service-Key.
+     * env INTERNAL_API_KEY). Used by every HR-calling client in this service (salary advances,
+     * HrEmployeeClient).
      */
     private String hrInternalApiKey = "";
     private String pdfServiceUrl   = "http://localhost:3000";
