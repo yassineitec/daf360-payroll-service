@@ -17,6 +17,9 @@ import java.time.OffsetDateTime;
  * @param fromStatus  advance only: the status left, null otherwise (and on creation)
  * @param detail      config: contract type · gross salary; advance: the actor's notes;
  *                    GENERIC: the table name
+ * @param oldValue    GENERIC only: the row's prior state as JSON (null on INSERT, and for the
+ *                    other two sources, which already carry a curated summary in {@code detail}).
+ * @param newValue    GENERIC only: the row's new state as JSON (null on DELETE).
  */
 public record AuditEntryDto(
         String source,
@@ -29,5 +32,7 @@ public record AuditEntryDto(
         String subjectName,
         String action,
         String fromStatus,
-        String detail
+        String detail,
+        String oldValue,
+        String newValue
 ) {}

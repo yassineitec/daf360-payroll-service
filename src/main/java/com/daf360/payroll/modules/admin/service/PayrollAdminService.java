@@ -196,7 +196,8 @@ public class PayrollAdminService {
                     h.getReason(), null,
                     h.getCurrentGrossSalary() == null
                             ? h.getContractType()
-                            : h.getContractType() + " · " + h.getCurrentGrossSalary().toPlainString()));
+                            : h.getContractType() + " · " + h.getCurrentGrossSalary().toPlainString(),
+                    null, null));
         }
         for (SalaryAdvanceHistory h : advances) {
             SalaryAdvance a = advanceById.get(h.getSalaryAdvanceId());
@@ -205,14 +206,16 @@ public class PayrollAdminService {
                     SOURCE_SALARY_ADVANCE, h.getId(), h.getCreatedAt(), paysId,
                     h.getActorUserId(), names.get(h.getActorUserId()),
                     h.getSalaryAdvanceId(), names.get(employee),
-                    h.getToStatus(), h.getFromStatus(), h.getNotes()));
+                    h.getToStatus(), h.getFromStatus(), h.getNotes(),
+                    null, null));
         }
         for (AuditTrail g : generic) {
             out.add(new AuditEntryDto(
                     SOURCE_GENERIC, g.getId(), g.getChangedAt(), paysId,
                     null, g.getChangedBy(),
                     null, g.getTableName() + " " + g.getPkJson(),
-                    actionLabel(g.getAction()), null, g.getTableName()));
+                    actionLabel(g.getAction()), null, g.getTableName(),
+                    g.getOldValue(), g.getNewValue()));
         }
         out.sort(Comparator.comparing(AuditEntryDto::at, Comparator.nullsLast(Comparator.reverseOrder())));
         return out.size() > size ? out.subList(0, size) : out;
