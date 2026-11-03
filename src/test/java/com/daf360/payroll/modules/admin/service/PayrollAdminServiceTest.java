@@ -3,6 +3,9 @@ package com.daf360.payroll.modules.admin.service;
 import com.daf360.payroll.modules.admin.dto.AuditEntryDto;
 import com.daf360.payroll.modules.admin.dto.PayrollCountryDto;
 import com.daf360.payroll.modules.admin.dto.SavePayrollCountryRequest;
+import com.daf360.payroll.modules.admin.entity.AuditTrail;
+import com.daf360.payroll.modules.admin.repository.AuditTrailRepository;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.security.access.AccessDeniedException;
 import java.util.Optional;
 import com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory;
@@ -51,6 +54,7 @@ class PayrollAdminServiceTest {
     @Mock EmployeePayrollConfigHistoryRepository configHistoryRepo;
     @Mock SalaryAdvanceHistoryRepository         advanceHistoryRepo;
     @Mock SalaryAdvanceRepository                advanceRepo;
+    @Mock AuditTrailRepository                   auditTrailRepo;
     @Mock UserContextService                     userContext;
 
     PayrollAdminService service;
@@ -60,7 +64,7 @@ class PayrollAdminServiceTest {
     @BeforeEach
     void setUp() {
         service = new PayrollAdminService(countryRepo, paysRefRepo, usersRefRepo,
-                configHistoryRepo, advanceHistoryRepo, advanceRepo, userContext);
+                configHistoryRepo, advanceHistoryRepo, advanceRepo, auditTrailRepo, userContext);
     }
 
     @Test
@@ -108,7 +112,7 @@ class PayrollAdminServiceTest {
         when(usersRefRepo.findAllById(anyIterable())).thenReturn(List.of(
                 user(1L, "Admin Paie"), user(2L, "DAF"), user(7L, "Salma"), user(8L, "Karim")));
 
-        List<AuditEntryDto> log = service.audit(179L, 50, true, true);
+        List<AuditEntryDto> log = service.audit(179L, 50, true, true, false);
 
         assertEquals(2, log.size());
         AuditEntryDto first = log.get(0);   // the advance, one day later
@@ -131,12 +135,37 @@ class PayrollAdminServiceTest {
     void audit_skipsSourcesTheCallerMayNotRead() {
         lenient().when(advanceRepo.findAllById(anyIterable())).thenReturn(List.of());
 
-        List<AuditEntryDto> log = service.audit(179L, 50, false, false);
+        List<AuditEntryDto> log = service.audit(179L, 50, false, false, false);
 
         assertEquals(0, log.size());
         verify(configHistoryRepo, never()).findByPaysIdOrderByChangedAtDesc(any(), any());
         verify(advanceHistoryRepo, never()).findLatestByPaysId(any(), any());
         verify(usersRefRepo, never()).findAllById(anyCollection());
+        verify(auditTrailRepo, never()).findByPaysId(any(), any());
+    }
+
+    @Test
+    void audit_includesGenericSource_whenRequested() {
+        AuditTrail generic = new AuditTrail();
+        generic.setId(30L);
+        generic.setTableName("payroll_countries");
+        generic.setPkJson("{\"pays_id\":179}");
+        generic.setAction("U");
+        generic.setChangedBy("alice");
+        generic.setChangedAt(T0.plusHours(2));
+
+        when(auditTrailRepo.findByPaysId(eq(179L), any())).thenReturn(new PageImpl<>(List.of(generic)));
+
+        List<AuditEntryDto> log = service.audit(179L, 50, false, false, true);
+
+        assertEquals(1, log.size());
+        AuditEntryDto entry = log.get(0);
+        assertEquals(PayrollAdminService.SOURCE_GENERIC, entry.source());
+        assertEquals("UPDATE", entry.action());
+        assertEquals("payroll_countries", entry.detail());
+        assertEquals("payroll_countries {\"pays_id\":179}", entry.subjectName());
+        assertEquals("alice", entry.actorName());
+        assertNull(entry.actorId());
     }
 
     // ── Pays de paie : création / modification ──────────────────────────────

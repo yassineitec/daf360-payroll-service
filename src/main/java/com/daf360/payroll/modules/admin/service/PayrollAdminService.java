@@ -3,6 +3,8 @@ package com.daf360.payroll.modules.admin.service;
 import com.daf360.payroll.modules.admin.dto.AuditEntryDto;
 import com.daf360.payroll.modules.admin.dto.PayrollCountryDto;
 import com.daf360.payroll.modules.admin.dto.SavePayrollCountryRequest;
+import com.daf360.payroll.modules.admin.entity.AuditTrail;
+import com.daf360.payroll.modules.admin.repository.AuditTrailRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,6 +52,7 @@ public class PayrollAdminService {
 
     public static final String SOURCE_EMPLOYEE_CONFIG = "EMPLOYEE_CONFIG";
     public static final String SOURCE_SALARY_ADVANCE  = "SALARY_ADVANCE";
+    public static final String SOURCE_GENERIC         = "GENERIC";
 
     /** Hard cap on the log length, whatever the caller asks. */
     static final int MAX_LIMIT = 500;
@@ -60,6 +63,7 @@ public class PayrollAdminService {
     private final EmployeePayrollConfigHistoryRepository configHistoryRepo;
     private final SalaryAdvanceHistoryRepository         advanceHistoryRepo;
     private final SalaryAdvanceRepository                advanceRepo;
+    private final AuditTrailRepository                   auditTrailRepo;
     private final UserContextService                     userContext;
 
     /**
@@ -162,7 +166,7 @@ public class PayrollAdminService {
      * {@code paysId} is a request parameter, so {@code PaysIsolationInterceptor} has already
      * refused a country outside the caller's scope.
      */
-    public List<AuditEntryDto> audit(Long paysId, int limit, boolean withConfig, boolean withAdvances) {
+    public List<AuditEntryDto> audit(Long paysId, int limit, boolean withConfig, boolean withAdvances, boolean withGeneric) {
         int size = Math.max(1, Math.min(limit, MAX_LIMIT));
         PageRequest page = PageRequest.of(0, size);
 
@@ -170,6 +174,8 @@ public class PayrollAdminService {
                 ? configHistoryRepo.findByPaysIdOrderByChangedAtDesc(paysId, page) : List.of();
         List<SalaryAdvanceHistory> advances = withAdvances
                 ? advanceHistoryRepo.findLatestByPaysId(paysId, page) : List.of();
+        List<AuditTrail> generic = withGeneric
+                ? auditTrailRepo.findByPaysId(paysId, page).getContent() : List.of();
 
         Map<Long, SalaryAdvance> advanceById = advanceRepo
                 .findAllById(advances.stream().map(SalaryAdvanceHistory::getSalaryAdvanceId).collect(Collectors.toSet()))
@@ -181,7 +187,7 @@ public class PayrollAdminService {
         advanceById.values().forEach(a -> userIds.add(a.getProfileUserId()));
         Map<Long, String> names = names(userIds);
 
-        List<AuditEntryDto> out = new ArrayList<>(configs.size() + advances.size());
+        List<AuditEntryDto> out = new ArrayList<>(configs.size() + advances.size() + generic.size());
         for (EmployeePayrollConfigHistory h : configs) {
             out.add(new AuditEntryDto(
                     SOURCE_EMPLOYEE_CONFIG, h.getId(), h.getChangedAt(), h.getPaysId(),
@@ -201,8 +207,24 @@ public class PayrollAdminService {
                     h.getSalaryAdvanceId(), names.get(employee),
                     h.getToStatus(), h.getFromStatus(), h.getNotes()));
         }
+        for (AuditTrail g : generic) {
+            out.add(new AuditEntryDto(
+                    SOURCE_GENERIC, g.getId(), g.getChangedAt(), paysId,
+                    null, g.getChangedBy(),
+                    null, g.getTableName() + " " + g.getPkJson(),
+                    actionLabel(g.getAction()), null, g.getTableName()));
+        }
         out.sort(Comparator.comparing(AuditEntryDto::at, Comparator.nullsLast(Comparator.reverseOrder())));
         return out.size() > size ? out.subList(0, size) : out;
+    }
+
+    private static String actionLabel(String code) {
+        return switch (code) {
+            case "I" -> "INSERT";
+            case "U" -> "UPDATE";
+            case "D" -> "DELETE";
+            default -> code;
+        };
     }
 
     private Map<Long, String> names(Collection<Long> ids) {

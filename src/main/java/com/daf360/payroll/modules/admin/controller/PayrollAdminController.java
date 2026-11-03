@@ -81,6 +81,9 @@ public class PayrollAdminController {
                 || codes.contains(PermissionCatalog.VIEW_EMPLOYEE_CONFIG)
                 || codes.contains(PermissionCatalog.MANAGE_EMPLOYEE_CONFIG);
         boolean withAdvances = superAdmin || codes.contains(PermissionCatalog.MANAGE_SALARY_ADVANCES);
-        return service.audit(paysId, limit, withConfig, withAdvances);
+        // GENERIC exposes raw field-level changes across every in-scope table -- gated to
+        // super admin only for v1, a broader privilege than the two narrower existing sources.
+        boolean withGeneric = superAdmin;
+        return service.audit(paysId, limit, withConfig, withAdvances, withGeneric);
     }
 }

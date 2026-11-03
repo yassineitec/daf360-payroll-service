@@ -26,18 +26,18 @@ class PayrollAdminControllerTest {
     @Test
     void audit_employeeConfigReader_getsOnlyConfigChanges() {
         new PayrollAdminController(service).audit(179L, 100, caller(PermissionCatalog.VIEW_EMPLOYEE_CONFIG));
-        verify(service).audit(179L, 100, true, false);
+        verify(service).audit(179L, 100, true, false, false);
     }
 
     @Test
     void audit_advancesManager_getsOnlyAdvanceChanges() {
         new PayrollAdminController(service).audit(179L, 100, caller(PermissionCatalog.MANAGE_SALARY_ADVANCES));
-        verify(service).audit(179L, 100, false, true);
+        verify(service).audit(179L, 100, false, true, false);
     }
 
     @Test
-    void audit_superAdmin_getsBoth() {
+    void audit_superAdmin_getsAllSources() {
         new PayrollAdminController(service).audit(179L, 100, caller(PermissionCatalog.SUPER_ADMIN));
-        verify(service).audit(179L, 100, true, true);
+        verify(service).audit(179L, 100, true, true, true);
     }
 }
