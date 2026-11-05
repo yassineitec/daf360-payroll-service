@@ -112,7 +112,11 @@ public class PayrollSimulatorService {
                 ? ps.getMaxConvergenceIterations()
                 : 50;
 
-        BigDecimal lo = targetNet;
+        // lo=0, not targetNet: an always-on taxable rubrique (e.g. Tunisia's meal voucher)
+        // can make net(0) > targetNet for a low target, putting the true root below
+        // targetNet and outside a [targetNet, 3x] bracket — the degenerate bisection that
+        // follows then walks toward `hi` and reports that as a "converged" net.
+        BigDecimal lo = BigDecimal.ZERO;
         BigDecimal hi = targetNet.multiply(new BigDecimal("3"));
 
         ConvergenceEngine.Result cr;
@@ -148,6 +152,11 @@ public class PayrollSimulatorService {
                                    Integer children,
                                    int iterations,
                                    boolean convergenceOk) {
+
+        // The convergence engine's raw iterate carries MathContext(20,...) precision — round
+        // it once here so every downstream figure (and the gross reported in the result) is a
+        // normal currency amount, not e.g. 242.7723279758915118027.
+        gross = gross.setScale(SCALE, RoundingMode.HALF_UP);
 
         // TAXABLE_BASE2 charges (e.g. Tunisia's CSS) are computed after IRPP on the
         // post-abattement/family-deduction base, not on gross — see below. Keep them out of
