@@ -14,6 +14,8 @@ public record SimulationRequest(
         String contractType,              // CDI|CDD|STAGE|CIVP  (defaults to CDI)
         Integer joursTravailes,           // working days for FIXE_JOURNALIER rubriques (defaults to 22)
         List<String> selectedBenefitCodes,// null = apply all active benefits; empty = no benefits
+        Boolean isMarried,                 // family IRPP-base deduction; null = not married
+        Integer children,                  // dependent children count; null = 0
         String candidateLabel,            // free-text label saved in result (for PDF report)
         String poste,                     // job title saved in result
         String grade,                     // grade saved in result

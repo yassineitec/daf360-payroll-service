@@ -37,6 +37,7 @@ import java.util.List;
 public class PayrollSimulatorService {
 
     private static final int SCALE = 4;
+    private static final BigDecimal TWELVE = BigDecimal.valueOf(12);
 
     private final IrppCalculatorService irppCalculator;
     private final ConvergenceEngine convergenceEngine;
@@ -61,7 +62,26 @@ public class PayrollSimulatorService {
                                           List<PayrollRubrique> rubriques,
                                           String contractType,
                                           int joursTravailes) {
-        return topDown(gross, ps, rates, benefits, rubriques, contractType, joursTravailes, 0, true);
+        return computeFromGross(gross, ps, rates, benefits, rubriques, contractType, joursTravailes, false, 0);
+    }
+
+    /**
+     * @param isMarried whether the employee is married, for the family IRPP-base deduction
+     *                  ({@code ParameterSet.familyDeductionMarriedAmount}); null/false = not applied.
+     * @param children  number of dependent children, capped at {@code ParameterSet.familyDeductionMaxChildren};
+     *                  null/0 = not applied.
+     */
+    public PayrollResult computeFromGross(BigDecimal gross,
+                                          ParameterSet ps,
+                                          List<SocialChargeRate> rates,
+                                          List<BenefitCatalogue> benefits,
+                                          List<PayrollRubrique> rubriques,
+                                          String contractType,
+                                          int joursTravailes,
+                                          Boolean isMarried,
+                                          Integer children) {
+        return topDown(gross, ps, rates, benefits, rubriques, contractType, joursTravailes,
+                isMarried, children, 0, true);
     }
 
     public PayrollResult computeFromNet(BigDecimal targetNet,
@@ -71,6 +91,19 @@ public class PayrollSimulatorService {
                                         List<PayrollRubrique> rubriques,
                                         String contractType,
                                         int joursTravailes) {
+        return computeFromNet(targetNet, ps, rates, benefits, rubriques, contractType, joursTravailes, false, 0);
+    }
+
+    /** See {@link #computeFromGross} for {@code isMarried}/{@code children}. */
+    public PayrollResult computeFromNet(BigDecimal targetNet,
+                                        ParameterSet ps,
+                                        List<SocialChargeRate> rates,
+                                        List<BenefitCatalogue> benefits,
+                                        List<PayrollRubrique> rubriques,
+                                        String contractType,
+                                        int joursTravailes,
+                                        Boolean isMarried,
+                                        Integer children) {
 
         BigDecimal tolerance = ps.getConvergenceTolerance() != null
                 ? ps.getConvergenceTolerance()
@@ -85,18 +118,19 @@ public class PayrollSimulatorService {
         ConvergenceEngine.Result cr;
         try {
             cr = convergenceEngine.solve(
-                    gross -> topDown(gross, ps, rates, benefits, rubriques, contractType, joursTravailes, 0, true)
+                    gross -> topDown(gross, ps, rates, benefits, rubriques, contractType, joursTravailes,
+                                    isMarried, children, 0, true)
                             .netInHand().subtract(targetNet),
                     targetNet.multiply(new BigDecimal("1.5")),
                     lo, hi,
                     tolerance, maxIter);
         } catch (ConvergenceException ex) {
             return topDown(ex.getLastEstimate(), ps, rates, benefits, rubriques,
-                    contractType, joursTravailes, ex.getIterations(), false);
+                    contractType, joursTravailes, isMarried, children, ex.getIterations(), false);
         }
 
         return topDown(cr.value(), ps, rates, benefits, rubriques, contractType, joursTravailes,
-                cr.iterations(), cr.converged());
+                isMarried, children, cr.iterations(), cr.converged());
     }
 
     // -----------------------------------------------------------------------
@@ -110,12 +144,25 @@ public class PayrollSimulatorService {
                                    List<PayrollRubrique> rubriques,
                                    String contractType,
                                    int joursTravailes,
+                                   Boolean isMarried,
+                                   Integer children,
                                    int iterations,
                                    boolean convergenceOk) {
 
-        // Evaluate all charges + rubriques in topological dependency order
+        // TAXABLE_BASE2 charges (e.g. Tunisia's CSS) are computed after IRPP on the
+        // post-abattement/family-deduction base, not on gross — see below. Keep them out of
+        // the ordinary gross-based evaluation entirely.
+        List<SocialChargeRate> ordinaryRates = rates.stream()
+                .filter(r -> !"TAXABLE_BASE2".equals(r.getBaseCalculation()))
+                .toList();
+        List<SocialChargeRate> base2Rates = rates.stream()
+                .filter(r -> "TAXABLE_BASE2".equals(r.getBaseCalculation()))
+                .filter(r -> contractType.equals(r.getContractType()))
+                .toList();
+
+        // Evaluate all ordinary charges + rubriques in topological dependency order
         TopologicalEvaluator.EvaluationResult eval =
-                topologicalEvaluator.evaluate(gross, rates, contractType, rubriques, joursTravailes);
+                topologicalEvaluator.evaluate(gross, ordinaryRates, contractType, rubriques, joursTravailes);
 
         BigDecimal employeeCharges = eval.totalChargesEE();
         BigDecimal employerCharges = eval.totalChargesER();
@@ -153,7 +200,7 @@ public class PayrollSimulatorService {
         if (socialChargeAdj.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal adjustedBase = gross.add(socialChargeAdj);
             TopologicalEvaluator.EvaluationResult adjusted =
-                    topologicalEvaluator.evaluate(adjustedBase, rates, contractType, List.of(), joursTravailes);
+                    topologicalEvaluator.evaluate(adjustedBase, ordinaryRates, contractType, List.of(), joursTravailes);
             employeeCharges = adjusted.totalChargesEE();
             employerCharges = adjusted.totalChargesER();
         }
@@ -162,20 +209,59 @@ public class PayrollSimulatorService {
         BigDecimal taxableBenefits    = computeTaxableBenefits(benefits);
         BigDecimal nonTaxableBenefits = computeNonTaxableBenefits(benefits);
 
-        // Strata 3 — Base imposable
+        // Strata 3 — Base imposable (monthly). Net in hand is based on THIS figure, not on
+        // the annualized/abattement-reduced base below — only the IRPP computation uses that.
         BigDecimal taxableBase = gross
                 .subtract(employeeCharges)
                 .add(taxableBenefits)
                 .add(taxableCredit)
                 .setScale(SCALE, RoundingMode.HALF_UP);
 
+        // ── IRPP base ("base2"): annualize, apply abattement + family deductions, round up to
+        //    the next whole currency unit — then compute IRPP annually and divide back to a
+        //    monthly amount. IRPP brackets are annual values; taxableBase above is monthly.
+        BigDecimal annualBase = taxableBase.multiply(TWELVE);
+
+        BigDecimal abattementRate = ps.getAbattementRatePct() != null ? ps.getAbattementRatePct() : BigDecimal.ZERO;
+        BigDecimal abattement = annualBase.multiply(abattementRate);
+        if (ps.getAbattementAnnualCap() != null) abattement = abattement.min(ps.getAbattementAnnualCap());
+        if (abattement.signum() < 0) abattement = BigDecimal.ZERO;
+
+        BigDecimal familyDeduction = BigDecimal.ZERO;
+        if (Boolean.TRUE.equals(isMarried) && ps.getFamilyDeductionMarriedAmount() != null) {
+            familyDeduction = familyDeduction.add(ps.getFamilyDeductionMarriedAmount());
+        }
+        int maxChildren = ps.getFamilyDeductionMaxChildren() != null ? ps.getFamilyDeductionMaxChildren() : 0;
+        int countedChildren = Math.min(Math.max(children != null ? children : 0, 0), maxChildren);
+        if (countedChildren > 0 && ps.getFamilyDeductionPerChildAmount() != null) {
+            familyDeduction = familyDeduction.add(
+                    ps.getFamilyDeductionPerChildAmount().multiply(BigDecimal.valueOf(countedChildren)));
+        }
+
+        BigDecimal base2 = annualBase.subtract(abattement).subtract(familyDeduction);
+        if (base2.signum() < 0) base2 = BigDecimal.ZERO;
+        BigDecimal base2Rounded = base2.setScale(0, RoundingMode.CEILING);
+
         // Strata 2 — IRPP
-        BigDecimal irpp = irppCalculator.compute(ps.getIrppBrackets(), taxableBase);
+        BigDecimal annualIrpp = irppCalculator.compute(ps.getIrppBrackets(), base2Rounded);
+        BigDecimal irpp = annualIrpp.divide(TWELVE, SCALE, RoundingMode.HALF_UP);
         BigDecimal netTaxable = taxableBase;
+
+        // TAXABLE_BASE2 charges (e.g. CSS): base = base2Rounded / 12, computed after IRPP,
+        // never folded into the employeeCharges that reduced taxableBase above. Employee side
+        // reduces net in hand directly below; employer side adds to employerCharges like any
+        // other charge, for the loaded-cost total.
+        BigDecimal base2Monthly = base2Rounded.divide(TWELVE, SCALE, RoundingMode.HALF_UP);
+        BigDecimal base2EmployeeTotal = BigDecimal.ZERO;
+        for (SocialChargeRate r : base2Rates) {
+            base2EmployeeTotal = base2EmployeeTotal.add(applyBase2Rate(base2Monthly, r.getEmployeeRate(), r.getCapAmount()));
+            employerCharges = employerCharges.add(applyBase2Rate(base2Monthly, r.getEmployerRate(), r.getCapAmount()));
+        }
 
         // Strata 1 — Net in hand
         BigDecimal netInHand = netTaxable
                 .subtract(irpp)
+                .subtract(base2EmployeeTotal)
                 .add(nonTaxableBenefits)
                 .add(nonTaxableCredit)
                 .subtract(totalDebit)
@@ -188,12 +274,23 @@ public class PayrollSimulatorService {
                 .add(employerShareTotal)
                 .setScale(SCALE, RoundingMode.HALF_UP);
 
+        // Reported employee charges include TAXABLE_BASE2 charges (e.g. CSS) for transparency,
+        // even though only the ordinary portion reduced the IRPP base above.
+        BigDecimal reportedEmployeeCharges = employeeCharges.add(base2EmployeeTotal);
+
         return new PayrollResult(
                 netInHand, netTaxable, taxableBase, gross, loadedCost,
-                irpp, employeeCharges, employerCharges,
+                irpp, reportedEmployeeCharges, employerCharges,
                 taxableCredit.add(nonTaxableCredit), totalDebit, employerShareTotal,
                 iterations, convergenceOk,
                 eval.evaluatedRubriques());
+    }
+
+    /** Rate-based charge computation on an arbitrary base: {@code min(base, cap) × rate}. */
+    private static BigDecimal applyBase2Rate(BigDecimal base, BigDecimal rate, BigDecimal cap) {
+        if (rate == null) return BigDecimal.ZERO;
+        BigDecimal effectiveBase = cap != null ? base.min(cap) : base;
+        return effectiveBase.multiply(rate).setScale(SCALE, RoundingMode.HALF_UP);
     }
 
     // -----------------------------------------------------------------------

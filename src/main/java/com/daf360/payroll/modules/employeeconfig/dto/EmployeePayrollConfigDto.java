@@ -11,6 +11,8 @@ public record EmployeePayrollConfigDto(
         List<String> selectedBenefitCodes,
         BigDecimal currentGrossSalary,
         BigDecimal currentNetSalary,
+        Boolean isMarried,
+        Integer childrenCount,
         Long updatedBy,
         OffsetDateTime updatedAt
 ) {}

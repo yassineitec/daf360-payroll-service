@@ -74,7 +74,7 @@ public class EmployeePayrollConfigService {
         String contractType = hr.map(HrEmployeeClient.HrEmployeeDto::contractType)
                 .filter(ct -> ct != null && !ct.isBlank())
                 .orElse("CDI");
-        return new EmployeePayrollConfigDto(profileUserId, paysId, contractType, List.of(), null, null, null, null);
+        return new EmployeePayrollConfigDto(profileUserId, paysId, contractType, List.of(), null, null, false, 0, null, null);
     }
 
     /**
@@ -102,7 +102,8 @@ public class EmployeePayrollConfigService {
         // 22 mirrors IndividualSimulationService's own joursTravailes default; this screen
         // doesn't expose an override.
         PayrollSimulatorService.PayrollResult result = simulatorService.computeFromGross(
-                grossSalary, ps, rates, benefits, rubriques, cfg.contractType(), 22);
+                grossSalary, ps, rates, benefits, rubriques, cfg.contractType(), 22,
+                cfg.isMarried(), cfg.childrenCount());
 
         return new CalculateNetResponse(result.netInHand());
     }
@@ -128,6 +129,8 @@ public class EmployeePayrollConfigService {
         entity.setSelectedBenefitCodes(benefitCodesJson);
         entity.setCurrentGrossSalary(req.currentGrossSalary());
         entity.setCurrentNetSalary(req.currentNetSalary());
+        entity.setIsMarried(req.isMarried() != null ? req.isMarried() : false);
+        entity.setChildrenCount(req.childrenCount() != null ? req.childrenCount() : 0);
         entity.setUpdatedBy(actingUserId);
         entity.setUpdatedAt(now);
         entity = repo.save(entity);
@@ -151,6 +154,7 @@ public class EmployeePayrollConfigService {
         return new EmployeePayrollConfigDto(
                 e.getProfileUserId(), e.getPaysId(), e.getContractType(),
                 fromJson(e.getSelectedBenefitCodes()), e.getCurrentGrossSalary(), e.getCurrentNetSalary(),
+                e.getIsMarried(), e.getChildrenCount(),
                 e.getUpdatedBy(), e.getUpdatedAt());
     }
 

@@ -12,5 +12,7 @@ public record UpsertEmployeePayrollConfigRequest(
         List<String> selectedBenefitCodes,
         BigDecimal currentGrossSalary,
         BigDecimal currentNetSalary,
+        Boolean isMarried,
+        Integer childrenCount,
         @NotBlank String reason
 ) {}

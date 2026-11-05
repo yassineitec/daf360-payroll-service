@@ -33,8 +33,16 @@ public class SocialChargeRate {
     @Column(name = "employer_rate", nullable = false)
     private BigDecimal employerRate = BigDecimal.ZERO;
 
+    /**
+     * GROSS|CAPPED_GROSS|FIXED|TAXABLE_BASE2. {@code TAXABLE_BASE2} means this charge's base
+     * is the post-abattement/family-deduction monthly taxable base (the same figure IRPP is
+     * computed on, e.g. Tunisia's CSS) rather than gross: it is computed after IRPP in
+     * {@code PayrollSimulatorService}, excluded from the employee-charges total that reduces
+     * the IRPP base, but still deducted from net in hand and (employer side) added to the
+     * loaded cost.
+     */
     @Column(name = "base_calculation", nullable = false)
-    private String baseCalculation = "GROSS";  // GROSS|CAPPED_GROSS|FIXED
+    private String baseCalculation = "GROSS";
 
     @Column(name = "cap_amount")
     private BigDecimal capAmount;

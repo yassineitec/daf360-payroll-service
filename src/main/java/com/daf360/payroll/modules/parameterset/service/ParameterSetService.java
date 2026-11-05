@@ -88,6 +88,11 @@ public class ParameterSetService {
         if (req.convergenceTolerance() != null) ps.setConvergenceTolerance(req.convergenceTolerance());
         if (req.maxConvergenceIterations() != null) ps.setMaxConvergenceIterations(req.maxConvergenceIterations());
         if (req.calibrationThresholdPct() != null) ps.setCalibrationThresholdPct(req.calibrationThresholdPct());
+        if (req.abattementRatePct() != null) ps.setAbattementRatePct(req.abattementRatePct());
+        ps.setAbattementAnnualCap(req.abattementAnnualCap());
+        if (req.familyDeductionMarriedAmount() != null) ps.setFamilyDeductionMarriedAmount(req.familyDeductionMarriedAmount());
+        if (req.familyDeductionPerChildAmount() != null) ps.setFamilyDeductionPerChildAmount(req.familyDeductionPerChildAmount());
+        if (req.familyDeductionMaxChildren() != null) ps.setFamilyDeductionMaxChildren(req.familyDeductionMaxChildren());
 
         ps = paramSetRepo.save(ps);
 
@@ -96,6 +101,43 @@ public class ParameterSetService {
         if (req.rubriques() != null) saveRubriques(ps.getId(), req.rubriques());
 
         return toDto(ps);
+    }
+
+    /**
+     * Updates a DRAFT's top-level fields in place (409 if not DRAFT) — same guard as
+     * {@link #updateSocialChargeRates}, {@link #updateBenefits}, {@link #updateRubriques}.
+     */
+    @Transactional
+    public ParameterSetDto updateFields(Long id, UpdateParameterSetFieldsRequest req) {
+        ParameterSet ps = findOrThrow(id);
+        assertStatus(ps, "DRAFT");
+        validateIrppBrackets(req.irppBrackets());
+        if (req.maxConvergenceIterations() != null && req.maxConvergenceIterations() < 1)
+            throw new IllegalArgumentException("Nombre maximal d'itérations : au moins 1");
+        if (req.convergenceTolerance() != null && req.convergenceTolerance().signum() <= 0)
+            throw new IllegalArgumentException("Tolérance de convergence : strictement positive");
+        if (req.calibrationThresholdPct() != null && req.calibrationThresholdPct().signum() < 0)
+            throw new IllegalArgumentException("Seuil de calibration : positif ou nul");
+        if (isNegative(req.abattementRatePct()))
+            throw new IllegalArgumentException("Taux d'abattement : positif ou nul");
+        if (isNegative(req.abattementAnnualCap()))
+            throw new IllegalArgumentException("Plafond d'abattement : positif ou nul");
+        if (isNegative(req.familyDeductionMarriedAmount()) || isNegative(req.familyDeductionPerChildAmount()))
+            throw new IllegalArgumentException("Déductions familiales : montants positifs ou nuls");
+        if (req.familyDeductionMaxChildren() != null && req.familyDeductionMaxChildren() < 0)
+            throw new IllegalArgumentException("Nombre d'enfants maximum : positif ou nul");
+
+        ps.setIrppBrackets(req.irppBrackets());
+        if (req.convergenceTolerance() != null) ps.setConvergenceTolerance(req.convergenceTolerance());
+        if (req.maxConvergenceIterations() != null) ps.setMaxConvergenceIterations(req.maxConvergenceIterations());
+        if (req.calibrationThresholdPct() != null) ps.setCalibrationThresholdPct(req.calibrationThresholdPct());
+        ps.setAbattementRatePct(req.abattementRatePct() != null ? req.abattementRatePct() : BigDecimal.ZERO);
+        ps.setAbattementAnnualCap(req.abattementAnnualCap());
+        ps.setFamilyDeductionMarriedAmount(req.familyDeductionMarriedAmount() != null ? req.familyDeductionMarriedAmount() : BigDecimal.ZERO);
+        ps.setFamilyDeductionPerChildAmount(req.familyDeductionPerChildAmount() != null ? req.familyDeductionPerChildAmount() : BigDecimal.ZERO);
+        ps.setFamilyDeductionMaxChildren(req.familyDeductionMaxChildren() != null ? req.familyDeductionMaxChildren() : 0);
+
+        return toDto(paramSetRepo.save(ps));
     }
 
     @Transactional
@@ -369,6 +411,9 @@ public class ParameterSetService {
                 ps.getId(), ps.getPaysId(), ps.getVersion(), ps.getFiscalYear(),
                 ps.getStatus(), ps.getIrppBrackets(), ps.getConvergenceTolerance(),
                 ps.getMaxConvergenceIterations(), ps.getCalibrationThresholdPct(),
+                ps.getAbattementRatePct(), ps.getAbattementAnnualCap(),
+                ps.getFamilyDeductionMarriedAmount(), ps.getFamilyDeductionPerChildAmount(),
+                ps.getFamilyDeductionMaxChildren(),
                 ps.getApprovedByHr(), ps.getApprovedByFinance(),
                 ps.getApprovedAt(), ps.getActivatedAt(), ps.getChangeRationale(),
                 ps.getPreviousVersionId(), ps.getCreatedAt(),

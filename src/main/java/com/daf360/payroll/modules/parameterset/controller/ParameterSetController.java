@@ -5,6 +5,7 @@ import com.daf360.payroll.modules.parameterset.dto.CreateParameterSetRequest;
 import com.daf360.payroll.modules.parameterset.dto.ParameterSetDto;
 import com.daf360.payroll.modules.parameterset.dto.SavePayrollRubriqueRequest;
 import com.daf360.payroll.modules.parameterset.dto.SocialChargeRateDto;
+import com.daf360.payroll.modules.parameterset.dto.UpdateParameterSetFieldsRequest;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.ref.service.UserContextService;
 import com.daf360.payroll.security.PaysScopeContext;
@@ -99,6 +100,15 @@ public class ParameterSetController {
     public ParameterSetDto approveFinance(@PathVariable Long id) {
         Long userId = userContext.currentUserId();
         return service.approveFinance(id, userId);
+    }
+
+    /** Met à jour le barème IRPP, la convergence et les déductions (abattement, situation
+     *  familiale) d'un jeu en brouillon (409 sinon) — sans toucher ses taux/avantages/rubriques. */
+    @PutMapping("/{id}/fields")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.APPROVE_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET_FAST_TRACK + "')")
+    public ParameterSetDto updateFields(@PathVariable Long id,
+            @RequestBody @Valid UpdateParameterSetFieldsRequest req) {
+        return service.updateFields(id, req);
     }
 
     @PutMapping("/{id}/social-charge-rates")

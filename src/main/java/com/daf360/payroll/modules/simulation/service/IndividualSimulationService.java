@@ -94,13 +94,15 @@ public class IndividualSimulationService {
                 throw new IllegalArgumentException(
                         "Le champ inputGross est requis et doit être positif en mode BRUT_TO_NET.");
             result = simulatorService.computeFromGross(
-                    req.inputGross(), ps, rates, benefits, rubriques, contractType, joursTravailes);
+                    req.inputGross(), ps, rates, benefits, rubriques, contractType, joursTravailes,
+                    req.isMarried(), req.children());
         } else {
             if (req.inputNet() == null || req.inputNet().compareTo(java.math.BigDecimal.ZERO) <= 0)
                 throw new IllegalArgumentException(
                         "Le champ inputNet est requis et doit être positif en mode NET_TO_BRUT.");
             result = simulatorService.computeFromNet(
-                    req.inputNet(), ps, rates, benefits, rubriques, contractType, joursTravailes);
+                    req.inputNet(), ps, rates, benefits, rubriques, contractType, joursTravailes,
+                    req.isMarried(), req.children());
         }
 
         // S1 — net versé: the user's target in NET_TO_BRUT, the computed net in BRUT_TO_NET

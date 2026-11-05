@@ -34,6 +34,12 @@ public class EmployeePayrollConfig {
     @Column(name = "current_net_salary")
     private BigDecimal currentNetSalary;
 
+    @Column(name = "is_married", nullable = false)
+    private Boolean isMarried = false;
+
+    @Column(name = "children_count", nullable = false)
+    private Integer childrenCount = 0;
+
     @Column(name = "updated_by", nullable = false)
     private Long updatedBy;
 

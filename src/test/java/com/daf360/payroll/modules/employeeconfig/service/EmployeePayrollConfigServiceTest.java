@@ -62,7 +62,8 @@ class EmployeePayrollConfigServiceTest {
         when(repo.save(any(EmployeePayrollConfig.class))).thenAnswer(inv -> inv.getArgument(0));
 
         UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
-                179L, "CDI", List.of(), new BigDecimal("5000.000"), new BigDecimal("3800.000"), "Ajustement");
+                179L, "CDI", List.of(), new BigDecimal("5000.000"), new BigDecimal("3800.000"),
+                false, 0, "Ajustement");
 
         EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
 
@@ -101,7 +102,7 @@ class EmployeePayrollConfigServiceTest {
                 null, null, null, 0, true, List.of());
         when(simulatorService.computeFromGross(
                 any(BigDecimal.class), any(ParameterSet.class), anyList(), anyList(), anyList(),
-                any(String.class), anyInt()))
+                any(String.class), anyInt(), any(), any()))
                 .thenReturn(simulatedResult);
 
         CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("6000.000"));
@@ -115,7 +116,7 @@ class EmployeePayrollConfigServiceTest {
         ArgumentCaptor<List<BenefitCatalogue>> benefitsCaptor = ArgumentCaptor.forClass(List.class);
         org.mockito.Mockito.verify(simulatorService).computeFromGross(
                 grossCaptor.capture(), any(ParameterSet.class), anyList(), benefitsCaptor.capture(), anyList(),
-                contractTypeCaptor.capture(), joursCaptor.capture());
+                contractTypeCaptor.capture(), joursCaptor.capture(), any(), any());
 
         assertEquals(new BigDecimal("6000.000"), grossCaptor.getValue());
         assertEquals("CDI", contractTypeCaptor.getValue());

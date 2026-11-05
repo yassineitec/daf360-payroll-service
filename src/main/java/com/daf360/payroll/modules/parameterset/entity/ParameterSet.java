@@ -40,6 +40,28 @@ public class ParameterSet {
     @Column(name = "calibration_threshold_pct", nullable = false)
     private BigDecimal calibrationThresholdPct = new BigDecimal("1.00");
 
+    /** Professional-expense deduction applied to the annual taxable base before IRPP brackets
+     *  (e.g. 0.10 for 10%). 0 = no abattement, matching every parameter set created before
+     *  this field existed. */
+    @Column(name = "abattement_rate_pct", nullable = false)
+    private BigDecimal abattementRatePct = BigDecimal.ZERO;
+
+    /** Annual cap on the abattement amount; null = uncapped. */
+    @Column(name = "abattement_annual_cap")
+    private BigDecimal abattementAnnualCap;
+
+    /** Annual IRPP-base deduction when the employee is married. 0 = none. */
+    @Column(name = "family_deduction_married_amount", nullable = false)
+    private BigDecimal familyDeductionMarriedAmount = BigDecimal.ZERO;
+
+    /** Annual IRPP-base deduction per dependent child, up to {@link #familyDeductionMaxChildren}. */
+    @Column(name = "family_deduction_per_child_amount", nullable = false)
+    private BigDecimal familyDeductionPerChildAmount = BigDecimal.ZERO;
+
+    /** Maximum number of children counted toward the per-child deduction. 0 = none counted. */
+    @Column(name = "family_deduction_max_children", nullable = false)
+    private Integer familyDeductionMaxChildren = 0;
+
     @Column(name = "approved_by_hr")
     private Long approvedByHr;
 
