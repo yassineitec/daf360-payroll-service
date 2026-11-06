@@ -42,4 +42,10 @@ public class EmployeePayrollConfigHistory {
 
     @Column(name = "changed_at", nullable = false)
     private OffsetDateTime changedAt;
+
+    @Column(name = "input_currency", length = 3)
+    private String inputCurrency;
+
+    @Column(name = "input_amount_original")
+    private BigDecimal inputAmountOriginal;
 }

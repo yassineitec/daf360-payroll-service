@@ -48,4 +48,13 @@ public class EmployeePayrollConfig {
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    /** ISO code the gross salary was actually typed in, or null when it was entered
+     *  directly in the country's working currency (the common case — no redundant data). */
+    @Column(name = "input_currency", length = 3)
+    private String inputCurrency;
+
+    /** The gross salary as typed, before conversion — null together with inputCurrency. */
+    @Column(name = "input_amount_original")
+    private BigDecimal inputAmountOriginal;
 }
