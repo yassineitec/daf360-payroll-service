@@ -25,6 +25,9 @@ public class RubriqueResultItem {
     /** Nature of the rubrique: GAIN | RETENUE | COTISATION | TAXE | AVANTAGE */
     private String nature;
 
+    /** EMPLOYEE | EMPLOYER | null — see {@link com.daf360.payroll.modules.payroll.entity.PayrollRubriqueDef#getPayer()}. */
+    private String payer;
+
     /** Strate (calculation tier) to which this rubrique belongs (1–5). */
     private int strate;
 

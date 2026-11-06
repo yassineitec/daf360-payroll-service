@@ -126,6 +126,7 @@ public class PayrollOrchestrator {
                 .labelFr(rubrique.getLabelFr())
                 .labelEn(rubrique.getLabelEn())
                 .nature(rubrique.getNature())
+                .payer(rubrique.getPayer())
                 .strate(rubrique.getStrate())
                 .assiette(rubrique.getAssietteCode() != null
                     ? ctx.getVariable(rubrique.getAssietteCode())
