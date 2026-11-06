@@ -8,6 +8,7 @@ import com.daf360.payroll.modules.parameterset.entity.ParameterSet;
 import com.daf360.payroll.modules.parameterset.entity.PayrollRubrique;
 import com.daf360.payroll.modules.parameterset.entity.SocialChargeRate;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
+import com.daf360.payroll.modules.ref.service.FxEntryConversionService;
 import com.daf360.payroll.modules.simulation.client.HrEmployeeClient;
 import com.daf360.payroll.modules.simulation.client.HrEmployeeClient.HrEmployeeDto;
 import com.daf360.payroll.modules.simulation.dto.SimulationMode;
@@ -31,6 +32,7 @@ public class IndividualSimulationService {
     private final ParameterSetService paramSetService;
     private final PayrollSimulatorService simulatorService;
     private final FxSnapshotService fxService;
+    private final FxEntryConversionService fxEntryService;
     private final SimulationResultRepository resultRepo;
     private final ObjectMapper objectMapper;
     private final HrEmployeeClient hrClient;
@@ -38,12 +40,14 @@ public class IndividualSimulationService {
     public IndividualSimulationService(ParameterSetService paramSetService,
                                        PayrollSimulatorService simulatorService,
                                        FxSnapshotService fxService,
+                                       FxEntryConversionService fxEntryService,
                                        SimulationResultRepository resultRepo,
                                        ObjectMapper objectMapper,
                                        HrEmployeeClient hrClient) {
         this.paramSetService = paramSetService;
         this.simulatorService = simulatorService;
         this.fxService = fxService;
+        this.fxEntryService = fxEntryService;
         this.resultRepo = resultRepo;
         this.objectMapper = objectMapper;
         this.hrClient = hrClient;
@@ -85,23 +89,39 @@ public class IndividualSimulationService {
                         .filter(b -> req.selectedBenefitCodes().contains(b.getBenefitCode()))
                         .toList();
 
+        // Resolved early (not just before persisting, as before): the working currency is
+        // needed now, to know whether/how to convert a non-working-currency entry.
+        FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
+
+        // ── Currency entry conversion ────────────────────────────────────────────
+        // null/same-as-working inputCurrency: no-op, req.inputNet()/inputGross() pass through
+        // unchanged -- today's behavior, exactly.
+        java.math.BigDecimal rawInputNet = req.inputNet();
+        java.math.BigDecimal rawInputGross = req.inputGross();
+        boolean currencyConverted = req.inputCurrency() != null
+                && !req.inputCurrency().equalsIgnoreCase(fx.currency());
+        java.math.BigDecimal convertedInputNet = rawInputNet == null ? null
+                : fxEntryService.convert(rawInputNet, req.inputCurrency(), fx.currency());
+        java.math.BigDecimal convertedInputGross = rawInputGross == null ? null
+                : fxEntryService.convert(rawInputGross, req.inputCurrency(), fx.currency());
+
         // ── Mode branch ──────────────────────────────────────────────────────────
         SimulationMode mode = req.mode() != null ? req.mode() : SimulationMode.NET_TO_BRUT;
 
         PayrollSimulatorService.PayrollResult result;
         if (mode == SimulationMode.BRUT_TO_NET) {
-            if (req.inputGross() == null || req.inputGross().compareTo(java.math.BigDecimal.ZERO) <= 0)
+            if (convertedInputGross == null || convertedInputGross.compareTo(java.math.BigDecimal.ZERO) <= 0)
                 throw new IllegalArgumentException(
                         "Le champ inputGross est requis et doit être positif en mode BRUT_TO_NET.");
             result = simulatorService.computeFromGross(
-                    req.inputGross(), ps, rates, benefits, rubriques, contractType, joursTravailes,
+                    convertedInputGross, ps, rates, benefits, rubriques, contractType, joursTravailes,
                     req.isMarried(), req.children());
         } else {
-            if (req.inputNet() == null || req.inputNet().compareTo(java.math.BigDecimal.ZERO) <= 0)
+            if (convertedInputNet == null || convertedInputNet.compareTo(java.math.BigDecimal.ZERO) <= 0)
                 throw new IllegalArgumentException(
                         "Le champ inputNet est requis et doit être positif en mode NET_TO_BRUT.");
             result = simulatorService.computeFromNet(
-                    req.inputNet(), ps, rates, benefits, rubriques, contractType, joursTravailes,
+                    convertedInputNet, ps, rates, benefits, rubriques, contractType, joursTravailes,
                     req.isMarried(), req.children());
         }
 
@@ -130,15 +150,16 @@ public class IndividualSimulationService {
         entity.setMode(mode.name());
         // inputNet stores the actual net in hand regardless of mode
         entity.setInputNet(netInHand);
+        entity.setInputCurrency(currencyConverted ? req.inputCurrency().toUpperCase() : null);
+        entity.setInputAmountOriginal(currencyConverted
+                ? (mode == SimulationMode.BRUT_TO_NET ? rawInputGross : rawInputNet)
+                : null);
         entity.setNetTaxable(result.netTaxable());
         entity.setTaxableBase(result.taxableBase());
         entity.setGross(result.gross());
         entity.setGrossWithBenefits(grossWithBenefits);
         entity.setCostNetRatio(costNetRatio);
         entity.setLoadedCost(result.loadedCost());
-        // Resolve the FX snapshot ONCE for this request — avoids re-querying payroll_countries
-        // per field.
-        FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
         entity.setLocalCurrency(fx.currency());
         entity.setFxRateEur(fx.eur());
         entity.setFxRateUsd(fx.usd());
@@ -214,7 +235,8 @@ public class IndividualSimulationService {
         return new SimulationResultDto(
                 e.getId(), e.getPaysId(), e.getProfileUserId(), e.getParameterSetId(),
                 e.getSimulationType(), e.getContractType(),
-                e.getInputNet(), e.getNetTaxable(), e.getTaxableBase(),
+                e.getInputNet(), e.getInputCurrency(), e.getInputAmountOriginal(),
+                e.getNetTaxable(), e.getTaxableBase(),
                 e.getGross(), e.getGrossWithBenefits(), e.getLoadedCost(),
                 e.getLoadedCostEur(), e.getLoadedCostUsd(), e.getLoadedCostChf(),
                 e.getFxRateEur(), e.getFxRateUsd(), e.getFxRateChf(),
