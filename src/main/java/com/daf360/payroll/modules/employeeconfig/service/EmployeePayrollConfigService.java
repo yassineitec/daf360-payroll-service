@@ -39,19 +39,25 @@ public class EmployeePayrollConfigService {
     private final ObjectMapper objectMapper;
     private final ParameterSetService paramSetService;
     private final PayrollSimulatorService simulatorService;
+    private final com.daf360.payroll.engine.FxSnapshotService fxService;
+    private final com.daf360.payroll.modules.ref.service.FxEntryConversionService fxEntryService;
 
     public EmployeePayrollConfigService(EmployeePayrollConfigRepository repo,
                                          EmployeePayrollConfigHistoryRepository historyRepo,
                                          HrEmployeeClient hrEmployeeClient,
                                          ObjectMapper objectMapper,
                                          ParameterSetService paramSetService,
-                                         PayrollSimulatorService simulatorService) {
+                                         PayrollSimulatorService simulatorService,
+                                         com.daf360.payroll.engine.FxSnapshotService fxService,
+                                         com.daf360.payroll.modules.ref.service.FxEntryConversionService fxEntryService) {
         this.repo = repo;
         this.historyRepo = historyRepo;
         this.hrEmployeeClient = hrEmployeeClient;
         this.objectMapper = objectMapper;
         this.paramSetService = paramSetService;
         this.simulatorService = simulatorService;
+        this.fxService = fxService;
+        this.fxEntryService = fxEntryService;
     }
 
     /**
@@ -74,7 +80,8 @@ public class EmployeePayrollConfigService {
         String contractType = hr.map(HrEmployeeClient.HrEmployeeDto::contractType)
                 .filter(ct -> ct != null && !ct.isBlank())
                 .orElse("CDI");
-        return new EmployeePayrollConfigDto(profileUserId, paysId, contractType, List.of(), null, null, false, 0, null, null);
+        String workingCurrency = paysId == null ? null : fxService.resolve(paysId).currency();
+        return new EmployeePayrollConfigDto(profileUserId, paysId, contractType, List.of(), null, null, false, 0, null, null, null, null, workingCurrency);
     }
 
     /**
@@ -85,7 +92,7 @@ public class EmployeePayrollConfigService {
      * calculation used to fill the net field while editing this screen. See
      * docs/superpowers/specs/2026-09-23-employee-config-enhancements-design.md.
      */
-    public CalculateNetResponse calculateNet(Long profileUserId, BigDecimal grossSalary) {
+    public CalculateNetResponse calculateNet(Long profileUserId, BigDecimal grossSalary, String inputCurrency) {
         EmployeePayrollConfigDto cfg = getOrDefault(profileUserId);
         if (cfg.paysId() == null) {
             throw new IllegalArgumentException(
@@ -99,10 +106,16 @@ public class EmployeePayrollConfigService {
                 .filter(b -> cfg.selectedBenefitCodes().contains(b.getBenefitCode()))
                 .toList();
 
+        // workingCurrency comes straight off cfg — getOrDefault() already resolved it via
+        // fxService, no need to call it a second time here.
+        BigDecimal convertedGross = inputCurrency == null
+                ? grossSalary
+                : fxEntryService.convert(grossSalary, inputCurrency, cfg.workingCurrency());
+
         // 22 mirrors IndividualSimulationService's own joursTravailes default; this screen
         // doesn't expose an override.
         PayrollSimulatorService.PayrollResult result = simulatorService.computeFromGross(
-                grossSalary, ps, rates, benefits, rubriques, cfg.contractType(), 22,
+                convertedGross, ps, rates, benefits, rubriques, cfg.contractType(), 22,
                 cfg.isMarried(), cfg.childrenCount());
 
         return new CalculateNetResponse(result.netInHand());
@@ -118,6 +131,16 @@ public class EmployeePayrollConfigService {
         OffsetDateTime now = OffsetDateTime.now();
         String benefitCodesJson = toJson(req.selectedBenefitCodes());
 
+        com.daf360.payroll.engine.FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
+        boolean currencyConverted = req.inputCurrency() != null
+                && !req.inputCurrency().equalsIgnoreCase(fx.currency());
+        BigDecimal rawGross = req.currentGrossSalary();
+        BigDecimal convertedGross = (rawGross == null || !currencyConverted)
+                ? rawGross
+                : fxEntryService.convert(rawGross, req.inputCurrency(), fx.currency());
+        String storedInputCurrency = currencyConverted ? req.inputCurrency().toUpperCase() : null;
+        BigDecimal storedInputAmount = currencyConverted ? rawGross : null;
+
         EmployeePayrollConfig entity = repo.findByProfileUserId(profileUserId).orElseGet(() -> {
             EmployeePayrollConfig created = new EmployeePayrollConfig();
             created.setProfileUserId(profileUserId);
@@ -127,10 +150,12 @@ public class EmployeePayrollConfigService {
         entity.setPaysId(req.paysId());
         entity.setContractType(req.contractType());
         entity.setSelectedBenefitCodes(benefitCodesJson);
-        entity.setCurrentGrossSalary(req.currentGrossSalary());
+        entity.setCurrentGrossSalary(convertedGross);
         entity.setCurrentNetSalary(req.currentNetSalary());
         entity.setIsMarried(req.isMarried() != null ? req.isMarried() : false);
         entity.setChildrenCount(req.childrenCount() != null ? req.childrenCount() : 0);
+        entity.setInputCurrency(storedInputCurrency);
+        entity.setInputAmountOriginal(storedInputAmount);
         entity.setUpdatedBy(actingUserId);
         entity.setUpdatedAt(now);
         entity = repo.save(entity);
@@ -140,28 +165,33 @@ public class EmployeePayrollConfigService {
         history.setPaysId(req.paysId());
         history.setContractType(req.contractType());
         history.setSelectedBenefitCodes(benefitCodesJson);
-        history.setCurrentGrossSalary(req.currentGrossSalary());
+        history.setCurrentGrossSalary(convertedGross);
         history.setCurrentNetSalary(req.currentNetSalary());
         history.setReason(req.reason());
         history.setChangedBy(actingUserId);
         history.setChangedAt(now);
+        history.setInputCurrency(storedInputCurrency);
+        history.setInputAmountOriginal(storedInputAmount);
         historyRepo.save(history);
 
         return toDto(entity);
     }
 
     private EmployeePayrollConfigDto toDto(EmployeePayrollConfig e) {
+        String workingCurrency = e.getPaysId() == null ? null : fxService.resolve(e.getPaysId()).currency();
         return new EmployeePayrollConfigDto(
                 e.getProfileUserId(), e.getPaysId(), e.getContractType(),
                 fromJson(e.getSelectedBenefitCodes()), e.getCurrentGrossSalary(), e.getCurrentNetSalary(),
                 e.getIsMarried(), e.getChildrenCount(),
-                e.getUpdatedBy(), e.getUpdatedAt());
+                e.getUpdatedBy(), e.getUpdatedAt(),
+                e.getInputCurrency(), e.getInputAmountOriginal(), workingCurrency);
     }
 
     private EmployeePayrollConfigHistoryDto toHistoryDto(EmployeePayrollConfigHistory h) {
         return new EmployeePayrollConfigHistoryDto(
                 h.getPaysId(), h.getContractType(), fromJson(h.getSelectedBenefitCodes()),
-                h.getCurrentGrossSalary(), h.getCurrentNetSalary(), h.getReason(), h.getChangedBy(), h.getChangedAt());
+                h.getCurrentGrossSalary(), h.getCurrentNetSalary(), h.getReason(), h.getChangedBy(), h.getChangedAt(),
+                h.getInputCurrency(), h.getInputAmountOriginal());
     }
 
     private String toJson(List<String> codes) {

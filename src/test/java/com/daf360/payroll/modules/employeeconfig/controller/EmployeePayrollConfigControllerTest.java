@@ -22,11 +22,11 @@ class EmployeePayrollConfigControllerTest {
 
     @Test
     void calculateNet_delegatesToServiceAndReturnsNetInHand() {
-        when(service.calculateNet(10L, new BigDecimal("5000.000")))
+        when(service.calculateNet(10L, new BigDecimal("5000.000"), null))
                 .thenReturn(new CalculateNetResponse(new BigDecimal("3820.500")));
 
         EmployeePayrollConfigController controller = new EmployeePayrollConfigController(service, userContext);
-        CalculateNetResponse result = controller.calculateNet(10L, new CalculateNetRequest(new BigDecimal("5000.000")));
+        CalculateNetResponse result = controller.calculateNet(10L, new CalculateNetRequest(new BigDecimal("5000.000"), null));
 
         assertEquals(new BigDecimal("3820.500"), result.netInHand());
     }

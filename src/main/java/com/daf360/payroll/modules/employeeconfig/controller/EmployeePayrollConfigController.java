@@ -49,6 +49,6 @@ public class EmployeePayrollConfigController {
     @PreAuthorize("hasAuthority('" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
     public CalculateNetResponse calculateNet(@PathVariable Long profileUserId,
                                               @Valid @RequestBody CalculateNetRequest req) {
-        return service.calculateNet(profileUserId, req.grossSalary());
+        return service.calculateNet(profileUserId, req.grossSalary(), req.inputCurrency());
     }
 }

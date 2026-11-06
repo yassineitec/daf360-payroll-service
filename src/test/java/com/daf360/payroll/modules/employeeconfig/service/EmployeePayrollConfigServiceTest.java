@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -39,10 +40,13 @@ class EmployeePayrollConfigServiceTest {
     @Mock HrEmployeeClient hrEmployeeClient;
     @Mock ParameterSetService paramSetService;
     @Mock PayrollSimulatorService simulatorService;
+    @Mock com.daf360.payroll.engine.FxSnapshotService fxService;
+    @Mock com.daf360.payroll.modules.ref.service.FxEntryConversionService fxEntryService;
 
     private EmployeePayrollConfigService service() {
         return new EmployeePayrollConfigService(
-                repo, historyRepo, hrEmployeeClient, new ObjectMapper(), paramSetService, simulatorService);
+                repo, historyRepo, hrEmployeeClient, new ObjectMapper(), paramSetService, simulatorService,
+                fxService, fxEntryService);
     }
 
     @Test
@@ -63,7 +67,8 @@ class EmployeePayrollConfigServiceTest {
 
         UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
                 179L, "CDI", List.of(), new BigDecimal("5000.000"), new BigDecimal("3800.000"),
-                false, 0, "Ajustement");
+                false, 0, "Ajustement", null);
+        when(fxService.resolve(179L)).thenReturn(new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
 
         EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
 
@@ -84,6 +89,7 @@ class EmployeePayrollConfigServiceTest {
         existing.setContractType("CDI");
         existing.setSelectedBenefitCodes("[\"MEAL\"]");
         when(repo.findByProfileUserId(10L)).thenReturn(Optional.of(existing));
+        when(fxService.resolve(179L)).thenReturn(new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
 
         ParameterSet ps = new ParameterSet();
         ps.setId(55L);
@@ -105,7 +111,7 @@ class EmployeePayrollConfigServiceTest {
                 any(String.class), anyInt(), any(), any()))
                 .thenReturn(simulatedResult);
 
-        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("6000.000"));
+        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("6000.000"), null);
 
         assertEquals(new BigDecimal("3800.000"), response.netInHand());
 
@@ -131,9 +137,88 @@ class EmployeePayrollConfigServiceTest {
         when(hrEmployeeClient.findEmployeeByUserId(10L)).thenReturn(Optional.empty());
 
         assertThrows(IllegalArgumentException.class,
-                () -> service().calculateNet(10L, new BigDecimal("5000.000")));
+                () -> service().calculateNet(10L, new BigDecimal("5000.000"), null));
 
         verifyNoInteractions(paramSetService);
         verifyNoInteractions(simulatorService);
+    }
+
+    @Test
+    void calculateNet_convertsInputCurrencyBeforeCallingSimulator() {
+        EmployeePayrollConfig existing = new EmployeePayrollConfig();
+        existing.setProfileUserId(10L);
+        existing.setPaysId(179L);
+        existing.setContractType("CDI");
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.of(existing));
+        when(fxService.resolve(179L)).thenReturn(
+                new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
+
+        ParameterSet ps = new ParameterSet();
+        ps.setId(55L);
+        when(paramSetService.loadActiveEntity(179L)).thenReturn(ps);
+        when(paramSetService.loadRates(55L)).thenReturn(List.of());
+        when(paramSetService.loadRubriques(55L)).thenReturn(List.of());
+        when(paramSetService.loadBenefits(55L)).thenReturn(List.of());
+
+        when(fxEntryService.convert(new BigDecimal("1500.000"), "TND", "EUR"))
+                .thenReturn(new BigDecimal("450.00"));
+
+        PayrollSimulatorService.PayrollResult simulatedResult = new PayrollSimulatorService.PayrollResult(
+                new BigDecimal("380.00"), null, null, null, null, null, null, null,
+                null, null, null, 0, true, List.of());
+        when(simulatorService.computeFromGross(
+                eq(new BigDecimal("450.00")), any(ParameterSet.class), anyList(), anyList(), anyList(),
+                any(String.class), anyInt(), any(), any()))
+                .thenReturn(simulatedResult);
+
+        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("1500.000"), "TND");
+
+        assertEquals(new BigDecimal("380.00"), response.netInHand());
+    }
+
+    @Test
+    void upsert_convertsAndPersistsOriginalCurrencyOnBothEntityAndHistory() {
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.empty());
+        when(repo.save(any(EmployeePayrollConfig.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(fxService.resolve(179L)).thenReturn(
+                new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
+        when(fxEntryService.convert(new BigDecimal("1500.000"), "TND", "EUR"))
+                .thenReturn(new BigDecimal("450.00"));
+
+        UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
+                179L, "CDI", List.of(), new BigDecimal("1500.000"), new BigDecimal("1200.000"),
+                false, 0, "Ajustement", "TND");
+
+        EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
+
+        assertEquals(new BigDecimal("450.00"), result.currentGrossSalary());
+        assertEquals("TND", result.inputCurrency());
+        assertEquals(new BigDecimal("1500.000"), result.inputAmountOriginal());
+        assertEquals("EUR", result.workingCurrency());
+
+        ArgumentCaptor<com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory> historyCaptor =
+                ArgumentCaptor.forClass(com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory.class);
+        org.mockito.Mockito.verify(historyRepo).save(historyCaptor.capture());
+        assertEquals("TND", historyCaptor.getValue().getInputCurrency());
+        assertEquals(new BigDecimal("1500.000"), historyCaptor.getValue().getInputAmountOriginal());
+    }
+
+    @Test
+    void upsert_sameAsWorkingCurrency_storesNullInputFields() {
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.empty());
+        when(repo.save(any(EmployeePayrollConfig.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(fxService.resolve(179L)).thenReturn(
+                new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
+
+        UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
+                179L, "CDI", List.of(), new BigDecimal("2500.000"), new BigDecimal("1900.000"),
+                false, 0, "Ajustement", null);
+
+        EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
+
+        assertEquals(new BigDecimal("2500.000"), result.currentGrossSalary());
+        assertNull(result.inputCurrency());
+        assertNull(result.inputAmountOriginal());
+        org.mockito.Mockito.verifyNoInteractions(fxEntryService);
     }
 }
