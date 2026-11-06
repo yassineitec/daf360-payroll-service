@@ -2,7 +2,6 @@ package com.daf360.payroll.modules.payroll.orchestrator;
 
 import com.daf360.payroll.modules.payroll.calculator.ExecutionContext;
 import com.daf360.payroll.modules.payroll.dto.RubriqueResultItem;
-import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -42,34 +41,5 @@ public class SystemVariableAggregator {
         context.putVariable("CHARGES_SAL",   strateTotals.get(3));
         context.putVariable("NET_IMPOSABLE", strateTotals.get(4));
         context.putVariable("NET_A_PAYER",   strateTotals.get(5));
-    }
-
-    /**
-     * Writes the final strate totals and aggregate KPIs into the PayrollResult entity.
-     * The entity must already be managed (i.e. saved within the current transaction)
-     * so that changes are tracked by JPA dirty-checking.
-     */
-    public void populateResult(PayrollResult result,
-                                List<RubriqueResultItem> items,
-                                ExecutionContext context) {
-        BigDecimal strate1 = context.getVariable("STRATE_1");
-        BigDecimal strate2 = context.getVariable("STRATE_2");
-        BigDecimal strate3 = context.getVariable("STRATE_3");
-        BigDecimal strate4 = context.getVariable("STRATE_4");
-        BigDecimal strate5 = context.getVariable("STRATE_5");
-
-        result.setStrate1(strate1);
-        result.setStrate2(strate2);
-        result.setStrate3(strate3);
-        result.setStrate4(strate4);
-        result.setStrate5(strate5);
-
-        result.setAggregateGross(strate1.add(strate2));
-        result.setAggregateNet(strate5);
-        // Strate 3 represents employee charges; used as employer charges proxy
-        result.setAggregateEmployerCharges(strate3);
-        // IRPP is set by the IRPP rubrique and stored in context under "IRPP"
-        result.setAggregateIrpp(context.getVariable("IRPP"));
-        result.setLoadedCost(strate1.add(strate2).add(strate3));
     }
 }
