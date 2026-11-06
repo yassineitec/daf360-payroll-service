@@ -12,5 +12,7 @@ public record EmployeePayrollConfigHistoryDto(
         BigDecimal currentNetSalary,
         String reason,
         Long changedBy,
-        OffsetDateTime changedAt
+        OffsetDateTime changedAt,
+        String inputCurrency,
+        BigDecimal inputAmountOriginal
 ) {}

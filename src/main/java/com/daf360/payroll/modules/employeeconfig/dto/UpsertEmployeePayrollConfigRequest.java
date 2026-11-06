@@ -14,5 +14,8 @@ public record UpsertEmployeePayrollConfigRequest(
         BigDecimal currentNetSalary,
         Boolean isMarried,
         Integer childrenCount,
-        @NotBlank String reason
+        @NotBlank String reason,
+        /** Null/omitted = currentGrossSalary is already in the working currency (today's
+         *  behavior, zero change for existing callers). */
+        String inputCurrency
 ) {}

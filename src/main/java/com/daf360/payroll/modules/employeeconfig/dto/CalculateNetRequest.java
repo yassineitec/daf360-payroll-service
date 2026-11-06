@@ -6,5 +6,6 @@ import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 
 public record CalculateNetRequest(
-        @NotNull @Positive BigDecimal grossSalary
+        @NotNull @Positive BigDecimal grossSalary,
+        String inputCurrency
 ) {}
