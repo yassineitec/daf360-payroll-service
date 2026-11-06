@@ -68,7 +68,47 @@ public class ContextLoader {
         ctx.putVariable("MOIS", BigDecimal.valueOf(request.getPeriodMonth()));
         ctx.putVariable("ANNEE", BigDecimal.valueOf(request.getPeriodYear()));
 
+        // 6. Expose every scalar parameter (taux_*, abattement_*, family_* etc.) as a
+        //    context variable too, by its own key name — FORMULE-mode rubriques only
+        //    read named context variables, never the parameters map directly (unlike
+        //    TAUX_PCT/MONTANT_FIXE/ANNUALISE_BAREME, which use param_key_* fields).
+        //    List-valued parameters (bareme_*) are skipped: they can't become a single
+        //    BigDecimal and aren't needed as one — ANNUALISE_BAREME reads them via
+        //    param_key_bareme directly from the parameters map.
+        copyScalarParametersAsVariables(ctx, params);
+
         return ctx;
+    }
+
+    /**
+     * Note: EngineConfigService.missingKeys() only scans param_key_taux/plafond/bareme
+     * across rubriques to warn admins about missing JSON keys before activating a param
+     * set. It has no visibility into parameter names embedded directly inside a FORMULE
+     * rubrique's formula_expression (like abattement_rate_tn) — activating a param set
+     * missing one evaluates to a wrong number silently, not a caught validation error.
+     */
+    static void copyScalarParametersAsVariables(ExecutionContext ctx, Map<String, Object> params) {
+        for (Map.Entry<String, Object> entry : params.entrySet()) {
+            BigDecimal value = toScalar(entry.getValue());
+            if (value != null) {
+                ctx.putVariable(entry.getKey(), value);
+            }
+        }
+    }
+
+    private static BigDecimal toScalar(Object raw) {
+        if (raw instanceof BigDecimal v) return v;
+        if (raw instanceof Double v) return BigDecimal.valueOf(v);
+        if (raw instanceof Integer v) return BigDecimal.valueOf(v.longValue());
+        if (raw instanceof Long v) return BigDecimal.valueOf(v);
+        if (raw instanceof String v) {
+            try {
+                return new BigDecimal(v);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public Long resolveParamSetId(Long paysId) {
