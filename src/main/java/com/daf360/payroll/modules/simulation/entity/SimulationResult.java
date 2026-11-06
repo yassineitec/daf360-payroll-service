@@ -34,6 +34,17 @@ public class SimulationResult {
     @Column(name = "input_net", nullable = false)
     private BigDecimal inputNet;
 
+    /** The currency actually typed into the form, when different from the country's working
+     *  currency (local_currency). Null when the user never touched the currency selector --
+     *  the common case, and existing rows before this feature are null here by migration. */
+    @Column(name = "input_currency", length = 3)
+    private String inputCurrency;
+
+    /** The amount as typed, in inputCurrency -- before conversion to the working currency.
+     *  Null exactly when inputCurrency is null. */
+    @Column(name = "input_amount_original")
+    private BigDecimal inputAmountOriginal;
+
     @Column(name = "net_taxable", nullable = false)
     private BigDecimal netTaxable;
 

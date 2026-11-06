@@ -192,7 +192,7 @@ public class CohortSimulationService {
         return new SimulationResultDto(
                 e.getId(), e.getPaysId(), e.getProfileUserId(), e.getParameterSetId(),
                 e.getSimulationType(), e.getContractType(),
-                e.getInputNet(), e.getNetTaxable(), e.getTaxableBase(),
+                e.getInputNet(), null, null, e.getNetTaxable(), e.getTaxableBase(),
                 e.getGross(), e.getGrossWithBenefits(), e.getLoadedCost(),
                 e.getLoadedCostEur(), e.getLoadedCostUsd(), e.getLoadedCostChf(),
                 e.getFxRateEur(), e.getFxRateUsd(), e.getFxRateChf(),

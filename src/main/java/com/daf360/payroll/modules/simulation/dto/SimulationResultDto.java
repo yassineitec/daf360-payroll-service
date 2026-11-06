@@ -20,6 +20,8 @@ public record SimulationResultDto(
         String contractType,
         // 5 strates
         BigDecimal inputNet,          // S1 net versé
+        String inputCurrency,         // currency actually typed, null = working currency
+        BigDecimal inputAmountOriginal, // amount as typed, in inputCurrency; null = same as inputNet
         BigDecimal netTaxable,        // S2 net imposable (IRPP base)
         BigDecimal taxableBase,       // S2 alias (kept for compatibility)
         BigDecimal gross,             // S3 brut base taxable
