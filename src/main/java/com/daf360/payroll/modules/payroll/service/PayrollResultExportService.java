@@ -95,6 +95,131 @@ public class PayrollResultExportService {
         return ExportFile.xlsx(filename(r, "xlsx"), bytes);
     }
 
+    /**
+     * Historique de paie d'un collaborateur — la liste des périodes de
+     * {@code /payroll/engine-results/:employeeId}. {@code ids} = numéros des résultats affichés,
+     * dans l'ordre de l'écran (recherche, filtres et tri appliqués) ; {@code null} = tout
+     * l'historique. Résultats hors du périmètre pays de l'utilisateur écartés.
+     * Colonnes = celles du tableau : période, brut, CNSS salariale (S3), IRPP, net (S5), date de calcul.
+     */
+    @Transactional(readOnly = true)
+    public ExportFile exportHistoryXlsx(Long employeeId, Collection<String> ids, ExportLang lang) {
+        List<List<Object>> rows = historyResults(employeeId, ids).stream().map(r -> Arrays.<Object>asList(
+                period(r, lang), historyGross(r), r.getStrate3(), historyIrpp(r), r.getStrate5(), calculatedOn(r)
+        )).toList();
+        byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Charge salariale", "Salary cost"), historyHeaders(lang), rows)));
+        return ExportFile.xlsx("Charge_salariale_" + employeeId + ".xlsx", bytes);
+    }
+
+    /** Même historique en PDF (pdf-service) ; {@code employeeName} = nom affiché dans l'en-tête. */
+    @Transactional(readOnly = true)
+    public ExportFile exportHistoryPdf(Long employeeId, Collection<String> ids, String employeeName, ExportLang lang) {
+        List<PayrollResult> results = historyResults(employeeId, ids);
+        DecimalFormat money = money(lang);
+        String who = employeeName != null && !employeeName.isBlank()
+                ? escape(employeeName.trim())
+                : lang.pick("Collaborateur", "Employee") + " #" + employeeId;
+        String title = lang.pick("Charge salariale", "Salary cost");
+
+        StringBuilder head = new StringBuilder();
+        List<String> headers = historyHeaders(lang);
+        for (int i = 0; i < headers.size(); i++) {
+            head.append(i >= 1 && i <= 4 ? "<th class=\"num\">" : "<th>").append(escape(headers.get(i))).append("</th>");
+        }
+        StringBuilder body = new StringBuilder();
+        BigDecimal tGross = BigDecimal.ZERO, tCnss = BigDecimal.ZERO, tIrpp = BigDecimal.ZERO, tNet = BigDecimal.ZERO;
+        for (PayrollResult r : results) {
+            BigDecimal gross = historyGross(r), cnss = nz(r.getStrate3()), irpp = nz(historyIrpp(r)), net = nz(r.getStrate5());
+            tGross = tGross.add(gross); tCnss = tCnss.add(cnss); tIrpp = tIrpp.add(irpp); tNet = tNet.add(net);
+            String calc = calculatedOn(r);
+            body.append("<tr><td>").append(escape(period(r, lang))).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, gross)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, cnss)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, irpp)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, net)).append("</td>")
+                .append("<td>").append(calc != null ? calc : "—").append("</td></tr>");
+        }
+        if (results.isEmpty()) {
+            body.append("<tr><td colspan=\"6\" class=\"empty\">")
+                .append(lang.pick("Aucun résultat de paie.", "No payroll result.")).append("</td></tr>");
+        } else {
+            body.append("<tr class=\"total\"><td>").append(lang.pick("Total", "Total")).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, tGross)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, tCnss)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, tIrpp)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, tNet)).append("</td><td></td></tr>");
+        }
+
+        String html = """
+                <!DOCTYPE html>
+                <html lang="%s">
+                <head>
+                <meta charset="UTF-8"/>
+                <title>%s</title>
+                <style>
+                  @page { size: A4 landscape; margin: 14mm 12mm; }
+                  body { font-family: Arial, sans-serif; font-size: 11px; color: #191c1e; margin: 0; }
+                  h1 { font-size: 17px; margin: 0 0 4px; }
+                  .sub { font-size: 11px; color: #5f6368; margin-bottom: 16px; }
+                  table { width: 100%%; border-collapse: collapse; }
+                  th, td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+                  th { background: #f3f4f6; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+                  thead { display: table-header-group; }
+                  tr { page-break-inside: avoid; }
+                  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+                  .total td { font-weight: 700; background: #eef2ff; border-top: 2px solid #c7d2fe; }
+                  .empty { text-align: center; color: #5f6368; padding: 16px; }
+                </style>
+                </head>
+                <body>
+                <h1>%s — %s</h1>
+                <div class="sub">%s</div>
+                <table>
+                  <thead><tr>%s</tr></thead>
+                  <tbody>%s</tbody>
+                </table>
+                </body>
+                </html>
+                """.formatted(
+                lang == ExportLang.EN ? "en" : "fr",
+                escape(title),
+                escape(title), who,
+                lang.pick(results.size() + " période(s)", results.size() + " period(s)"),
+                head, body);
+        String filename = "Charge_salariale_" + employeeId + ".pdf";
+        return ExportFile.pdf(filename, pdfClient.render(html, filename));
+    }
+
+    /** Résultats du collaborateur dans le périmètre pays de l'utilisateur, sélectionnés et
+     *  ordonnés comme à l'écran ({@code ids} = numéros de résultat ; {@code null} = tous). */
+    private List<PayrollResult> historyResults(Long employeeId, Collection<String> ids) {
+        boolean superAdmin = isSuperAdmin();
+        PaysScopeContext.PaysScope scope = superAdmin ? null : userContext.getCurrentUserPaysScope();
+        List<PayrollResult> all = resultRepo.findByEmployeeIdOrderByPeriodYearDescPeriodMonthDesc(employeeId).stream()
+                .filter(r -> superAdmin || (r.getPaysId() != null && scope != null && scope.allows(r.getPaysId())))
+                .toList();
+        return ExportRows.select(all, ids, r -> String.valueOf(r.getId()));
+    }
+
+    private static List<String> historyHeaders(ExportLang lang) {
+        return List.of(
+                lang.pick("Période", "Period"), lang.pick("Brut", "Gross"),
+                lang.pick("CNSS salariale", "Employee CNSS"), "IRPP",
+                lang.pick("Net à payer", "Net pay"), lang.pick("Calculé le", "Calculated on"));
+    }
+
+    private static BigDecimal historyGross(PayrollResult r) {
+        return r.getAggregateGross() != null ? r.getAggregateGross() : nz(r.getStrate1()).add(nz(r.getStrate2()));
+    }
+
+    private static BigDecimal historyIrpp(PayrollResult r) {
+        return r.getAggregateIrpp() != null ? r.getAggregateIrpp() : r.getStrate4();
+    }
+
+    private static String calculatedOn(PayrollResult r) {
+        return r.getCalculatedAt() != null ? r.getCalculatedAt().atZoneSameInstant(DISPLAY_ZONE).format(DATE_TIME) : null;
+    }
+
     // ── PDF ──────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)

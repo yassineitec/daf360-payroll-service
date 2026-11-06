@@ -2,6 +2,8 @@ package com.daf360.payroll.modules.payroll.repository;
 
 import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -24,6 +26,27 @@ public interface PayrollResultRepository extends JpaRepository<PayrollResult, Lo
     Optional<PayrollResult> findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(Long paysId);
 
     List<PayrollResult> findByPaysIdAndPeriodYearAndPeriodMonth(Long paysId, int periodYear, int periodMonth);
+
+    /**
+     * Résultats d'un pays dont le mois tombe dans [{@code fromKey}, {@code toKey}], bornes
+     * incluses, chaque mois encodé {@code année * 100 + mois} (202603 = mars 2026).
+     */
+    @Query("SELECT r FROM PayrollResult r WHERE r.paysId = :paysId "
+         + "AND (r.periodYear * 100 + r.periodMonth) BETWEEN :fromKey AND :toKey")
+    List<PayrollResult> findByPaysIdAndPeriodKeyBetween(@Param("paysId") Long paysId,
+                                                        @Param("fromKey") int fromKey,
+                                                        @Param("toKey") int toKey);
+
+    /**
+     * Collaborateurs ayant au moins un résultat sur [{@code fromKey}, {@code toKey}] (même
+     * encodage que ci-dessus), tous pays confondus quand {@code paysId} est nul.
+     */
+    @Query("SELECT DISTINCT r.employeeId FROM PayrollResult r "
+         + "WHERE (:paysId IS NULL OR r.paysId = :paysId) "
+         + "AND (r.periodYear * 100 + r.periodMonth) BETWEEN :fromKey AND :toKey")
+    List<Long> findEmployeeIdsWithResultsBetween(@Param("paysId") Long paysId,
+                                                 @Param("fromKey") int fromKey,
+                                                 @Param("toKey") int toKey);
 
     /**
      * Le DERNIER calcul de chaque collaborateur parmi {@code rows} (même période). Chaque
