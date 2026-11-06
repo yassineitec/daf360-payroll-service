@@ -63,4 +63,12 @@ public class PayrollRubriqueDef {
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    /**
+     * EMPLOYEE | EMPLOYER | null — which side a COTISATION rubrique is charged to.
+     * Null for GAIN/TAXE natures (a tax is inherently withheld from the employee without
+     * needing this flag; an earning isn't a "charge" either side pays).
+     */
+    @Column(name = "payer", length = 10)
+    private String payer;
 }
