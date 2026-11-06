@@ -3,6 +3,7 @@ package com.daf360.payroll.modules.ref.controller;
 import com.daf360.payroll.modules.ref.entity.PaysRef;
 import com.daf360.payroll.modules.ref.entity.UsersRef;
 import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
+import com.daf360.payroll.modules.ref.repository.PayrollFxRateRepository;
 import com.daf360.payroll.modules.ref.repository.UsersRefRepository;
 import com.daf360.payroll.modules.ref.service.ProfileSyncService;
 import com.daf360.payroll.security.PermissionCatalog;
@@ -19,13 +20,16 @@ public class RefController {
     private final PaysRefRepository paysRefRepository;
     private final UsersRefRepository usersRefRepository;
     private final ProfileSyncService profileSyncService;
+    private final PayrollFxRateRepository fxRateRepository;
 
     public RefController(PaysRefRepository paysRefRepository,
                          UsersRefRepository usersRefRepository,
-                         ProfileSyncService profileSyncService) {
+                         ProfileSyncService profileSyncService,
+                         PayrollFxRateRepository fxRateRepository) {
         this.paysRefRepository = paysRefRepository;
         this.usersRefRepository = usersRefRepository;
         this.profileSyncService = profileSyncService;
+        this.fxRateRepository = fxRateRepository;
     }
 
     @GetMapping("/pays")
@@ -40,6 +44,18 @@ public class RefController {
         // The replica deliberately keeps test and machine accounts (other tables reference
         // users_ref), so this picker is where they are excluded.
         return usersRefRepository.findByIsEmployeeTrueOrderByFullNameAsc();
+    }
+
+    public record FxRateDto(String currencyCode, java.math.BigDecimal rateToEur) {}
+
+    /** Currencies the simulator's amount field can offer, with their cached rate-to-EUR --
+     *  the frontend never does its own FX math, it only needs the list of available codes. */
+    @GetMapping("/fx-rates")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.RUN_SIMULATION + "')")
+    public List<FxRateDto> listFxRates() {
+        return fxRateRepository.findAll().stream()
+                .map(r -> new FxRateDto(r.getCurrencyCode(), r.getRateToEur()))
+                .toList();
     }
 
     @GetMapping("/users/by-pays/{paysId}")
