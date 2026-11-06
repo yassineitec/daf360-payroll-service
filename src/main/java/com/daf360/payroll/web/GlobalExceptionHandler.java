@@ -2,6 +2,7 @@ package com.daf360.payroll.web;
 
 import com.daf360.payroll.engine.ConvergenceException;
 import com.daf360.payroll.engine.CyclicDependencyException;
+import com.daf360.payroll.modules.ref.service.FxEntryConversionException;
 import com.daf360.payroll.modules.simulation.service.PdfGenerationException;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,6 +37,13 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(422);
         pd.setDetail("Le calcul n'a pas convergé après " + ex.getIterations()
                 + " itérations. Vérifiez les paramètres de paie ou augmentez le nombre d'itérations.");
+        return pd;
+    }
+
+    @ExceptionHandler(FxEntryConversionException.class)
+    public ProblemDetail handleFxEntryConversion(FxEntryConversionException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(422);
+        pd.setDetail(ex.getMessage());
         return pd;
     }
 
@@ -143,6 +151,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneric(Exception ex) {
+        // Sans ce log, un 500 générique ne laisse aucune trace nulle part : ni ici, ni côté
+        // JDBC/Hibernate (silencieux pour toute exception levée hors de la couche SQL elle-même).
+        log.error("500 non classifié : {}", ex.getMessage(), ex);
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
         pd.setDetail("Une erreur interne s'est produite. Veuillez réessayer ou contacter le support.");
         return pd;
