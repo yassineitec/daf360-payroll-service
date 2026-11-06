@@ -29,12 +29,18 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.format.annotation.DateTimeFormat;
+
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/payroll/engine")
@@ -82,9 +88,29 @@ public class PayrollEngineController {
     @PreAuthorize("hasAnyAuthority('"
         + PermissionCatalog.VIEW_RESULTS + "','"
         + PermissionCatalog.RUN_ENGINE + "')")
-    public PayrollResultsSummaryDto getResultsSummary(@RequestParam Long paysId) {
+    public PayrollResultsSummaryDto getResultsSummary(
+            @RequestParam Long paysId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) List<Long> employeeIds) {
         String currency = countryRepo.findByPaysId(paysId).map(PayrollCountry::getCurrencyCode).orElse(null);
-        return summarize(paysId, currency);
+        return summarize(paysId, currency, from, to, employeeIds);
+    }
+
+    /**
+     * Collaborateurs ayant au moins un résultat de paie entre {@code from} et {@code to}
+     * (au mois près, bornes incluses), pour un pays ou tous — le filtre « Période » de
+     * l'annuaire `/payroll/engine-results`.
+     */
+    @GetMapping("/results/employees")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_RESULTS + "','"
+        + PermissionCatalog.RUN_ENGINE + "')")
+    public List<Long> getEmployeesWithResults(
+            @RequestParam(required = false) Long paysId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return resultRepo.findEmployeeIdsWithResultsBetween(paysId, fromKey(from), toKey(to));
     }
 
     /**
@@ -96,26 +122,60 @@ public class PayrollEngineController {
     @PreAuthorize("hasAnyAuthority('"
         + PermissionCatalog.VIEW_RESULTS + "','"
         + PermissionCatalog.RUN_ENGINE + "')")
-    public List<PayrollResultsSummaryDto> getAllResultsSummaries() {
+    public List<PayrollResultsSummaryDto> getAllResultsSummaries(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) List<Long> employeeIds) {
         return countryRepo.findAll().stream()
-            .map(c -> summarize(c.getPaysId(), c.getCurrencyCode()))
+            .map(c -> summarize(c.getPaysId(), c.getCurrencyCode(), from, to, employeeIds))
             .toList();
     }
 
-    private PayrollResultsSummaryDto summarize(Long paysId, String currency) {
-        Optional<PayrollResult> latest = resultRepo.findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(paysId);
-        if (latest.isEmpty()) {
+    /** Mois d'une date encodé {@code année * 100 + mois} ; sans borne basse, tout le passé. */
+    private static int fromKey(LocalDate from) {
+        return from == null ? 0 : from.getYear() * 100 + from.getMonthValue();
+    }
+
+    /** Idem pour la borne haute ; sans borne, tout l'avenir. */
+    private static int toKey(LocalDate to) {
+        return to == null ? 999_912 : to.getYear() * 100 + to.getMonthValue();
+    }
+
+    /**
+     * Sans période : le dernier mois calculé du pays (comportement historique). Avec une
+     * période ({@code from} et/ou {@code to}) : tous les mois qu'elle couvre, additionnés.
+     * {@code employeeIds} non vide restreint les totaux à ces collaborateurs.
+     */
+    private PayrollResultsSummaryDto summarize(Long paysId, String currency,
+                                               LocalDate from, LocalDate to, List<Long> employeeIds) {
+        Set<Long> only = employeeIds == null || employeeIds.isEmpty() ? null : new HashSet<>(employeeIds);
+        List<PayrollResult> raw;
+        if (from == null && to == null) {
+            Optional<PayrollResult> latest = resultRepo.findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(paysId);
+            raw = latest.isEmpty() ? List.of() : resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(
+                paysId, latest.get().getPeriodYear(), latest.get().getPeriodMonth());
+        } else {
+            raw = resultRepo.findByPaysIdAndPeriodKeyBetween(paysId, fromKey(from), toKey(to));
+        }
+        if (only != null) raw = raw.stream().filter(r -> only.contains(r.getEmployeeId())).toList();
+        if (raw.isEmpty()) {
             return new PayrollResultsSummaryDto(paysId, currency, null, null, 0,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0, null);
         }
-        int year = latest.get().getPeriodYear();
-        int month = latest.get().getPeriodMonth();
-        // Dernier calcul de chaque collaborateur seulement : un mois relancé ne compte qu'une fois.
-        List<PayrollResult> rows = PayrollResultRepository.latestPerEmployee(
-            resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(paysId, year, month));
+        // Dernier calcul de chaque collaborateur, MOIS PAR MOIS : un mois relancé ne compte
+        // qu'une fois, mais deux mois différents du même collaborateur s'additionnent.
+        List<PayrollResult> rows = raw.stream()
+            .collect(Collectors.groupingBy(r -> r.getPeriodYear() * 100 + r.getPeriodMonth()))
+            .values().stream()
+            .flatMap(month -> PayrollResultRepository.latestPerEmployee(month).stream())
+            .toList();
+        PayrollResult last = rows.stream()
+            .max(Comparator.comparingInt(r -> r.getPeriodYear() * 100 + r.getPeriodMonth()))
+            .orElseThrow();
         return new PayrollResultsSummaryDto(
-            paysId, currency, year, month,
-            rows.size(),
+            paysId, currency, last.getPeriodYear(), last.getPeriodMonth(),
+            // Collaborateurs distincts (sur une période de plusieurs mois, chacun une fois).
+            (int) rows.stream().map(PayrollResult::getEmployeeId).distinct().count(),
             sum(rows, PayrollResult::getAggregateGross),
             sum(rows, PayrollResult::getStrate5),
             sum(rows, PayrollResult::getLoadedCost),
