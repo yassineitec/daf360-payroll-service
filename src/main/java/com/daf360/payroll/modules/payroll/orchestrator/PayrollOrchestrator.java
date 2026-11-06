@@ -250,11 +250,18 @@ public class PayrollOrchestrator {
      */
     private void applyEmployeeBaseSalary(ExecutionContext ctx, List<PayrollRubriqueDef> rubriques, Long employeeId) {
         if (employeeId == null) return;
-        BigDecimal gross = employeeConfigRepo.findByProfileUserId(employeeId)
-            .map(c -> c.getCurrentGrossSalary())
-            .filter(g -> g != null && g.signum() > 0)
-            .orElse(null);
-        if (gross == null) {
+        var config = employeeConfigRepo.findByProfileUserId(employeeId).orElse(null);
+
+        // IS_MARRIED/CHILDREN_COUNT feed Tunisia's ASSIETTE_IRPP family-deduction formula
+        // (strate 4). Seeded as 0/false when the employee has no config row at all, same
+        // "fall back to no adjustment" posture as the base-salary lookup below.
+        boolean isMarried = config != null && Boolean.TRUE.equals(config.getIsMarried());
+        int childrenCount = config != null && config.getChildrenCount() != null ? config.getChildrenCount() : 0;
+        ctx.putVariable("IS_MARRIED", isMarried ? BigDecimal.ONE : BigDecimal.ZERO);
+        ctx.putVariable("CHILDREN_COUNT", BigDecimal.valueOf(childrenCount));
+
+        BigDecimal gross = config != null ? config.getCurrentGrossSalary() : null;
+        if (gross == null || gross.signum() <= 0) {
             log.info("applyEmployeeBaseSalary: pas de salaire configuré pour l'employé {} — montant du jeu de paramètres", employeeId);
             return;
         }
