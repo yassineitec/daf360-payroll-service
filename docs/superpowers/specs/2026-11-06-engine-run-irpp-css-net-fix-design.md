@@ -163,8 +163,12 @@ PayrollOrchestrator.run(employeeId, paysId, period...)
 
 - **Acceptance bar (Tunisia)**: running the new engine with the same inputs as the
   already-validated old-model reference scenario (gross=462, CDI, no benefits, single,
-  0 children) must produce `net`/`loadedCost` matching `415.40`/`543.17` within a small
+  0 children) must produce `net` matching the old model's `415.40` within a small
   tolerance (propose ±0.01, matching the old engine's own convergence tolerance).
+  `loadedCost` does **not** match the old model's `543.17` — that figure structurally
+  excludes TFP and FOPROLOS, which have no old-model equivalent at all. The correct
+  new-model `loadedCost` for this scenario is `543.17 + TFP(462×2%=9.24) +
+  FOPROLOS(462×1%=4.62) = 557.03`; assert against that value instead.
 - **Regression (Tunisia)**: `loadedCost` must equal `gross + CNSS_PATRONAL + TFP +
   FOPROLOS + AT_PATRONAL` exactly — the specific undercount bug 3 described.
 - **Regression (both countries)**: `aggregateNet`/`loadedCost` must no longer read 0
