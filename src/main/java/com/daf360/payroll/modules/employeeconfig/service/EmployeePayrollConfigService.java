@@ -121,6 +121,18 @@ public class EmployeePayrollConfigService {
         return new CalculateNetResponse(result.netInHand());
     }
 
+    /** Contrat de la configuration paie ENREGISTRÉE, par collaborateur — pour la liste
+     *  /payroll/employee-config, qui sinon n'affiche que le contrat de la fiche RH.
+     *  Les collaborateurs sans configuration enregistrée sont absents de la map. */
+    public java.util.Map<Long, String> getSavedContractTypes(java.util.Collection<Long> profileUserIds) {
+        if (profileUserIds == null || profileUserIds.isEmpty()) return java.util.Map.of();
+        java.util.Map<Long, String> out = new java.util.HashMap<>();
+        for (EmployeePayrollConfig c : repo.findByProfileUserIdIn(profileUserIds)) {
+            if (c.getContractType() != null) out.put(c.getProfileUserId(), c.getContractType());
+        }
+        return out;
+    }
+
     public List<EmployeePayrollConfigHistoryDto> getHistory(Long profileUserId) {
         return historyRepo.findByProfileUserIdOrderByChangedAtDesc(profileUserId).stream()
                 .map(this::toHistoryDto)

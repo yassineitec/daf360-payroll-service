@@ -26,6 +26,14 @@ public class EmployeePayrollConfigController {
         this.userContext = userContext;
     }
 
+    /** userId → contrat de la config paie enregistrée (liste /payroll/employee-config).
+     *  Déclaré avant `/{profileUserId}` pour la lisibilité ; le segment littéral l'emporte. */
+    @GetMapping("/contract-types")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_EMPLOYEE_CONFIG + "','" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
+    public java.util.Map<Long, String> contractTypes(@RequestParam List<Long> userIds) {
+        return service.getSavedContractTypes(userIds);
+    }
+
     @GetMapping("/{profileUserId}")
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_EMPLOYEE_CONFIG + "','" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
     public EmployeePayrollConfigDto get(@PathVariable Long profileUserId) {
