@@ -6,6 +6,8 @@ import com.daf360.payroll.modules.payroll.repository.PayrollCountryRepository;
 import com.daf360.payroll.modules.ref.entity.PaysRef;
 import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
 import com.daf360.payroll.modules.ref.repository.UsersRefRepository;
+import com.daf360.payroll.modules.ref.repository.PayrollFxRateRepository;
+import com.daf360.payroll.modules.ref.entity.PayrollFxRate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,19 +45,21 @@ class ProfileSyncServiceTest {
 
     private static final String FACT_URL = "http://fact-url";
     private static final String ENTITIES_FOR_SYNC_URL = FACT_URL + "/api/fact/ref/entities-for-sync";
+    private static final String FX_RATES_URL = FACT_URL + "/api/fact/ref/fx-rates";
 
     @Mock RestTemplate restTemplate;
     @Mock PaysRefRepository paysRefRepository;
     @Mock UsersRefRepository usersRefRepository;
     @Mock AppProperties appProperties;
     @Mock PayrollCountryRepository payrollCountryRepository;
+    @Mock PayrollFxRateRepository fxRateRepository;
 
     ProfileSyncService service;
 
     @BeforeEach
     void setUp() {
         service = new ProfileSyncService(restTemplate, paysRefRepository, usersRefRepository,
-                appProperties, payrollCountryRepository);
+                appProperties, payrollCountryRepository, fxRateRepository);
         ReflectionTestUtils.setField(service, "facturationServiceUrl", FACT_URL);
     }
 
@@ -217,5 +221,48 @@ class ProfileSyncServiceTest {
         verify(paysRefRepository).saveAll(captor.capture());
         PaysRef saved = captor.getValue().stream().filter(p -> p.getId().equals(999L)).findFirst().orElseThrow();
         assertThat(saved.getDevise()).isEqualTo(""); // never null
+    }
+
+    @Test
+    void syncFxRates_savesEveryRateReturnedByFacturation() {
+        List<Map<String, Object>> rates = List.of(
+                Map.of("currencyCode", "TND", "rateToEur", "0.300000"),
+                Map.of("currencyCode", "USD", "rateToEur", "0.920000"));
+        when(restTemplate.exchange(eq(FX_RATES_URL),
+                eq(HttpMethod.GET), isNull(), any(ParameterizedTypeReference.class)))
+                .thenReturn(ResponseEntity.ok(rates));
+
+        service.syncFxRates();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<PayrollFxRate>> captor = ArgumentCaptor.forClass(List.class);
+        verify(fxRateRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).hasSize(2);
+        assertThat(captor.getValue()).anySatisfy(r -> {
+            assertThat(r.getCurrencyCode()).isEqualTo("TND");
+            assertThat(r.getRateToEur()).isEqualByComparingTo("0.300000");
+        });
+    }
+
+    @Test
+    void syncFxRates_emptyResponse_leavesCacheUntouched() {
+        when(restTemplate.exchange(eq(FX_RATES_URL),
+                eq(HttpMethod.GET), isNull(), any(ParameterizedTypeReference.class)))
+                .thenReturn(ResponseEntity.ok(List.of()));
+
+        service.syncFxRates();
+
+        verify(fxRateRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void syncFxRates_restCallFails_isSwallowed() {
+        when(restTemplate.exchange(eq(FX_RATES_URL),
+                eq(HttpMethod.GET), isNull(), any(ParameterizedTypeReference.class)))
+                .thenThrow(new RuntimeException("connection refused"));
+
+        assertThatCode(() -> service.syncFxRates()).doesNotThrowAnyException();
+
+        verify(fxRateRepository, never()).saveAll(any());
     }
 }

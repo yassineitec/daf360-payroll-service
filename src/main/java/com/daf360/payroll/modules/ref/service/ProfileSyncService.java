@@ -7,6 +7,8 @@ import com.daf360.payroll.modules.ref.entity.PaysRef;
 import com.daf360.payroll.modules.ref.entity.UsersRef;
 import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
 import com.daf360.payroll.modules.ref.repository.UsersRefRepository;
+import com.daf360.payroll.modules.ref.repository.PayrollFxRateRepository;
+import com.daf360.payroll.modules.ref.entity.PayrollFxRate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +19,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,7 @@ public class ProfileSyncService {
     private final UsersRefRepository usersRefRepository;
     private final AppProperties appProperties;
     private final PayrollCountryRepository payrollCountryRepository;
+    private final PayrollFxRateRepository fxRateRepository;
 
     @Value("${app.rh-service-url:http://localhost:8888}")
     private String rhServiceUrl;
@@ -51,12 +55,14 @@ public class ProfileSyncService {
                               PaysRefRepository paysRefRepository,
                               UsersRefRepository usersRefRepository,
                               AppProperties appProperties,
-                              PayrollCountryRepository payrollCountryRepository) {
+                              PayrollCountryRepository payrollCountryRepository,
+                              PayrollFxRateRepository fxRateRepository) {
         this.restTemplate = restTemplate;
         this.paysRefRepository = paysRefRepository;
         this.usersRefRepository = usersRefRepository;
         this.appProperties = appProperties;
         this.payrollCountryRepository = payrollCountryRepository;
+        this.fxRateRepository = fxRateRepository;
     }
 
     @Scheduled(fixedDelay = 15 * 60 * 1_000, initialDelay = 5_000)
@@ -64,6 +70,7 @@ public class ProfileSyncService {
         syncPays();
         syncUsers();
         syncEntityCurrencies();
+        syncFxRates();
     }
 
     void syncPays() {
@@ -210,6 +217,42 @@ public class ProfileSyncService {
         } catch (Exception e) {
             log.warn("entity currency sync failed against {}: {}",
                     facturationServiceUrl + "/api/fact/ref/entities-for-sync", e.getMessage());
+        }
+    }
+
+    /**
+     * Polls finance's fx-rates endpoint (its admin-maintained RATE_EUR_<CODE> rows) and
+     * rebuilds payroll_fx_rates from it wholesale -- this cache is never edited by hand, so
+     * there is nothing to merge: every synced row simply overwrites its prior value.
+     */
+    void syncFxRates() {
+        try {
+            ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
+                    facturationServiceUrl + "/api/fact/ref/fx-rates",
+                    HttpMethod.GET, null,
+                    new ParameterizedTypeReference<>() {});
+
+            List<Map<String, Object>> rates = response.getBody();
+            if (rates == null || rates.isEmpty()) {
+                log.warn("fx-rates sync: {} returned no rate — payroll_fx_rates left untouched",
+                        facturationServiceUrl + "/api/fact/ref/fx-rates");
+                return;
+            }
+
+            LocalDateTime now = LocalDateTime.now();
+            List<PayrollFxRate> entities = rates.stream().map(m -> {
+                PayrollFxRate rate = new PayrollFxRate();
+                rate.setCurrencyCode((String) m.get("currencyCode"));
+                rate.setRateToEur(new java.math.BigDecimal(m.get("rateToEur").toString()));
+                rate.setSyncedAt(now);
+                return rate;
+            }).toList();
+
+            fxRateRepository.saveAll(entities);
+            log.info("Synced {} FX rates from facturation-service", entities.size());
+        } catch (Exception e) {
+            log.warn("fx-rates sync failed against {}: {}",
+                    facturationServiceUrl + "/api/fact/ref/fx-rates", e.getMessage());
         }
     }
 }
