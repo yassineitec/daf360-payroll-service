@@ -79,9 +79,25 @@ public class FormuleCalculator implements PayrollCalculator {
             BigDecimal value = vars.get(varName);
             expr = expr.replaceAll(
                     "\\b" + Pattern.quote(varName) + "\\b",
-                    value.toPlainString()
+                    toDecimalLiteral(value)
             );
         }
         return expr;
+    }
+
+    /**
+     * A whole-number BigDecimal's toPlainString() (e.g. "2000") parses in SpEL as an
+     * int literal, not a double — and Spring's reflective method resolution for calls
+     * like T(Math).max/min refuses to pick between the (int,int)/(double,double)
+     * overloads when the two arguments parse as different literal types, throwing
+     * EL1031E. FormuleCalculator.evaluateFormula swallows that as an EvaluationException
+     * and silently returns ZERO, so this wasn't a crash — every formula using
+     * T(Math).max/min against a whole-number parameter just always evaluated to 0.
+     * Always emitting a decimal point makes every substituted variable parse as a
+     * double literal, regardless of whether its value happens to be a whole number.
+     */
+    private static String toDecimalLiteral(BigDecimal value) {
+        String literal = value.toPlainString();
+        return literal.indexOf('.') < 0 ? literal + ".0" : literal;
     }
 }
