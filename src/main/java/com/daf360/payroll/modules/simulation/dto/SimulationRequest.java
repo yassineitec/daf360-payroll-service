@@ -22,5 +22,9 @@ public record SimulationRequest(
         String discipline,                // discipline saved in result
         // ── simulation direction ──────────────────────────────────────────────
         SimulationMode mode,              // null → NET_TO_BRUT (backward-compatible default)
-        @Positive BigDecimal inputGross   // BRUT_TO_NET: required. NET_TO_BRUT: ignored.
+        @Positive BigDecimal inputGross,  // BRUT_TO_NET: required. NET_TO_BRUT: ignored.
+        // null/omitted = the country's working currency (today's behavior, zero change for
+        // existing callers). When set and different, inputNet/inputGross are converted to the
+        // working currency before the engine runs -- see IndividualSimulationService.
+        String inputCurrency
 ) {}
