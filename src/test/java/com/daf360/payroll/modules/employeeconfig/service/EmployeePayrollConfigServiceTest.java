@@ -160,7 +160,7 @@ class EmployeePayrollConfigServiceTest {
         when(paramSetService.loadRubriques(55L)).thenReturn(List.of());
         when(paramSetService.loadBenefits(55L)).thenReturn(List.of());
 
-        when(fxEntryService.convert(new BigDecimal("1500.000"), "TND", "EUR"))
+        when(fxEntryService.convert(new BigDecimal("1500.000"), "USD", "EUR"))
                 .thenReturn(new BigDecimal("450.00"));
 
         PayrollSimulatorService.PayrollResult simulatedResult = new PayrollSimulatorService.PayrollResult(
@@ -171,9 +171,45 @@ class EmployeePayrollConfigServiceTest {
                 any(String.class), anyInt(), any(), any()))
                 .thenReturn(simulatedResult);
 
-        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("1500.000"), "TND");
+        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("1500.000"), "USD");
 
         assertEquals(new BigDecimal("380.00"), response.netInHand());
+    }
+
+    @Test
+    void calculateNet_nativeCurrencyForTunisia_treatedAsNoOp() {
+        // Tunisia's platform "working currency" (EUR) is itself a label for real TND, calibrated
+        // 1:1 -- picking "TND" from the entry-currency dropdown must behave exactly like not
+        // picking a currency at all, not trigger a real market-rate conversion.
+        EmployeePayrollConfig existing = new EmployeePayrollConfig();
+        existing.setProfileUserId(10L);
+        existing.setPaysId(179L);
+        existing.setContractType("CDI");
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.of(existing));
+        when(fxService.resolve(179L)).thenReturn(
+                new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
+
+        ParameterSet ps = new ParameterSet();
+        ps.setId(55L);
+        when(paramSetService.loadActiveEntity(179L)).thenReturn(ps);
+        when(paramSetService.loadRates(55L)).thenReturn(List.of());
+        when(paramSetService.loadRubriques(55L)).thenReturn(List.of());
+        when(paramSetService.loadBenefits(55L)).thenReturn(List.of());
+        when(fxEntryService.isNativeCurrency(179L, "TND")).thenReturn(true);
+
+        PayrollSimulatorService.PayrollResult simulatedResult = new PayrollSimulatorService.PayrollResult(
+                new BigDecimal("1579.5523"), null, null, null, null, null, null, null,
+                null, null, null, 0, true, List.of());
+        when(simulatorService.computeFromGross(
+                eq(new BigDecimal("2070.28")), any(ParameterSet.class), anyList(), anyList(), anyList(),
+                any(String.class), anyInt(), any(), any()))
+                .thenReturn(simulatedResult);
+
+        CalculateNetResponse response = service().calculateNet(10L, new BigDecimal("2070.28"), "TND");
+
+        assertEquals(new BigDecimal("1579.5523"), response.netInHand());
+        org.mockito.Mockito.verify(fxEntryService, org.mockito.Mockito.never())
+                .convert(any(BigDecimal.class), any(), any());
     }
 
     @Test
@@ -182,25 +218,46 @@ class EmployeePayrollConfigServiceTest {
         when(repo.save(any(EmployeePayrollConfig.class))).thenAnswer(inv -> inv.getArgument(0));
         when(fxService.resolve(179L)).thenReturn(
                 new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
-        when(fxEntryService.convert(new BigDecimal("1500.000"), "TND", "EUR"))
+        when(fxEntryService.convert(new BigDecimal("1500.000"), "USD", "EUR"))
                 .thenReturn(new BigDecimal("450.00"));
 
         UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
                 179L, "CDI", List.of(), new BigDecimal("1500.000"), new BigDecimal("1200.000"),
-                false, 0, "Ajustement", "TND");
+                false, 0, "Ajustement", "USD");
 
         EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
 
         assertEquals(new BigDecimal("450.00"), result.currentGrossSalary());
-        assertEquals("TND", result.inputCurrency());
+        assertEquals("USD", result.inputCurrency());
         assertEquals(new BigDecimal("1500.000"), result.inputAmountOriginal());
         assertEquals("EUR", result.workingCurrency());
 
         ArgumentCaptor<com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory> historyCaptor =
                 ArgumentCaptor.forClass(com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory.class);
         org.mockito.Mockito.verify(historyRepo).save(historyCaptor.capture());
-        assertEquals("TND", historyCaptor.getValue().getInputCurrency());
+        assertEquals("USD", historyCaptor.getValue().getInputCurrency());
         assertEquals(new BigDecimal("1500.000"), historyCaptor.getValue().getInputAmountOriginal());
+    }
+
+    @Test
+    void upsert_nativeCurrencyForTunisia_treatedAsNoOp() {
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.empty());
+        when(repo.save(any(EmployeePayrollConfig.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(fxService.resolve(179L)).thenReturn(
+                new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("EUR", BigDecimal.ONE, new BigDecimal("1.08"), new BigDecimal("0.95")));
+        when(fxEntryService.isNativeCurrency(179L, "TND")).thenReturn(true);
+
+        UpsertEmployeePayrollConfigRequest req = new UpsertEmployeePayrollConfigRequest(
+                179L, "CDI", List.of(), new BigDecimal("2070.280"), new BigDecimal("1579.552"),
+                false, 0, "Ajustement", "TND");
+
+        EmployeePayrollConfigDto result = service().upsert(10L, req, 99L);
+
+        assertEquals(new BigDecimal("2070.280"), result.currentGrossSalary());
+        assertNull(result.inputCurrency());
+        assertNull(result.inputAmountOriginal());
+        org.mockito.Mockito.verify(fxEntryService, org.mockito.Mockito.never())
+                .convert(any(BigDecimal.class), any(), any());
     }
 
     @Test

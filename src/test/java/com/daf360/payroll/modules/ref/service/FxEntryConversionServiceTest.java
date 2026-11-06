@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -77,5 +78,72 @@ class FxEntryConversionServiceTest {
         BigDecimal result = service.convert(new BigDecimal("415.40"), null, "EUR");
 
         assertEquals(new BigDecimal("415.40"), result);
+    }
+
+    @Test
+    void isNativeCurrency_tndForTunisia_returnsTrue() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertTrue(service.isNativeCurrency(179L, "TND"));
+        assertTrue(service.isNativeCurrency(179L, "tnd"));
+    }
+
+    @Test
+    void isNativeCurrency_eurForTunisia_returnsFalse() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertFalse(service.isNativeCurrency(179L, "EUR"));
+    }
+
+    @Test
+    void isNativeCurrency_egpForEgypt_returnsTrue() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertTrue(service.isNativeCurrency(53L, "EGP"));
+    }
+
+    @Test
+    void isNativeCurrency_tndForEgypt_returnsFalse() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertFalse(service.isNativeCurrency(53L, "TND"));
+    }
+
+    @Test
+    void isNativeCurrency_unknownPaysId_returnsFalse() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertFalse(service.isNativeCurrency(999L, "TND"));
+    }
+
+    @Test
+    void isNativeCurrency_nullCurrency_returnsFalse() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        assertFalse(service.isNativeCurrency(179L, null));
+    }
+
+    @Test
+    void convert_fourArg_nativeCurrencyForTunisia_returnsAmountUnchangedWithoutRateLookup() {
+        service = new FxEntryConversionService(fxRateRepo);
+
+        BigDecimal result = service.convert(new BigDecimal("2070.28"), "TND", "EUR", 179L);
+
+        assertEquals(new BigDecimal("2070.28"), result);
+        verifyNoInteractions(fxRateRepo);
+    }
+
+    @Test
+    void convert_fourArg_nonNativeCurrency_appliesRealConversion() {
+        service = new FxEntryConversionService(fxRateRepo);
+        PayrollFxRate usd = new PayrollFxRate();
+        usd.setCurrencyCode("USD");
+        usd.setRateToEur(new BigDecimal("0.920000"));
+        when(fxRateRepo.findByCurrencyCode("USD")).thenReturn(Optional.of(usd));
+
+        // 100 USD entered for Tunisia (a genuinely foreign currency there) -> 92.0000 EUR
+        BigDecimal result = service.convert(new BigDecimal("100"), "USD", "EUR", 179L);
+
+        assertEquals(0, new BigDecimal("92.0000").compareTo(result));
     }
 }

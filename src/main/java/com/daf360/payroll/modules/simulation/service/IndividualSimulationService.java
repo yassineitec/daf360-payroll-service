@@ -99,11 +99,12 @@ public class IndividualSimulationService {
         java.math.BigDecimal rawInputNet = req.inputNet();
         java.math.BigDecimal rawInputGross = req.inputGross();
         boolean currencyConverted = req.inputCurrency() != null
-                && !req.inputCurrency().equalsIgnoreCase(fx.currency());
+                && !req.inputCurrency().equalsIgnoreCase(fx.currency())
+                && !fxEntryService.isNativeCurrency(req.paysId(), req.inputCurrency());
         java.math.BigDecimal convertedInputNet = rawInputNet == null ? null
-                : fxEntryService.convert(rawInputNet, req.inputCurrency(), fx.currency());
+                : fxEntryService.convert(rawInputNet, req.inputCurrency(), fx.currency(), req.paysId());
         java.math.BigDecimal convertedInputGross = rawInputGross == null ? null
-                : fxEntryService.convert(rawInputGross, req.inputCurrency(), fx.currency());
+                : fxEntryService.convert(rawInputGross, req.inputCurrency(), fx.currency(), req.paysId());
 
         // ── Mode branch ──────────────────────────────────────────────────────────
         SimulationMode mode = req.mode() != null ? req.mode() : SimulationMode.NET_TO_BRUT;

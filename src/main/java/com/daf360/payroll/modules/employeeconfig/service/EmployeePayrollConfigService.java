@@ -108,7 +108,7 @@ public class EmployeePayrollConfigService {
 
         // workingCurrency comes straight off cfg — getOrDefault() already resolved it via
         // fxService, no need to call it a second time here.
-        BigDecimal convertedGross = inputCurrency == null
+        BigDecimal convertedGross = (inputCurrency == null || fxEntryService.isNativeCurrency(cfg.paysId(), inputCurrency))
                 ? grossSalary
                 : fxEntryService.convert(grossSalary, inputCurrency, cfg.workingCurrency());
 
@@ -133,7 +133,8 @@ public class EmployeePayrollConfigService {
 
         com.daf360.payroll.engine.FxSnapshotService.FxSnapshot fx = fxService.resolve(req.paysId());
         boolean currencyConverted = req.inputCurrency() != null
-                && !req.inputCurrency().equalsIgnoreCase(fx.currency());
+                && !req.inputCurrency().equalsIgnoreCase(fx.currency())
+                && !fxEntryService.isNativeCurrency(req.paysId(), req.inputCurrency());
         BigDecimal rawGross = req.currentGrossSalary();
         BigDecimal convertedGross = (rawGross == null || !currencyConverted)
                 ? rawGross
