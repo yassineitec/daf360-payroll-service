@@ -135,7 +135,7 @@ class EngineConfigServiceTest {
 
     private static SaveEngineRubriqueRequest rubrique(String code, String mode, String taux, String bareme, String formula) {
         return new SaveEngineRubriqueRequest(code, "Libellé", null, 3, "RETENUE", mode, "BRUT",
-            taux, null, bareme, formula, null, null, false, 10, true);
+            taux, null, bareme, formula, null, null, false, 10, true, null);
     }
 
     @Test
@@ -162,7 +162,7 @@ class EngineConfigServiceTest {
 
     private static SaveEngineRubriqueRequest rubrique(String code, String mode, String assiette, String taux, String bareme, String formula) {
         return new SaveEngineRubriqueRequest(code, "Libellé", null, 3, "RETENUE", mode, assiette,
-            taux, null, bareme, formula, null, null, false, 10, true);
+            taux, null, bareme, formula, null, null, false, 10, true, null);
     }
 
     private static PayrollRubriqueDef existing(String code) {
@@ -212,5 +212,48 @@ class EngineConfigServiceTest {
 
         assertThrows(IllegalStateException.class,
             () -> service.createRubrique(179L, rubrique("CNSS_EE", "TAUX_PCT", "CNSS_TAUX", null, null)));
+    }
+
+    // ── Payeur (cotisations) ────────────────────────────────────────────────
+
+    @Test
+    void createRubrique_cotisationWithoutPayer_isRefused() {
+        lenient().when(rubriqueRepo.findByCountryIdAndCode(any(), any())).thenReturn(Optional.empty());
+
+        SaveEngineRubriqueRequest req = new SaveEngineRubriqueRequest(
+            "TEST_COTIS", "Test", null, 3, "COTISATION", "TAUX_PCT", "STRATE_1",
+            "some_key", null, null, null, null, null, false, 0, true, null /* payer */);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> service.createRubrique(179L, req));
+        assertEquals("Nature COTISATION : payeur (EMPLOYEE/EMPLOYER) obligatoire", e.getMessage());
+        verify(rubriqueRepo, never()).save(any());
+    }
+
+    @Test
+    void createRubrique_nonCotisationWithPayer_isRefused() {
+        lenient().when(rubriqueRepo.findByCountryIdAndCode(any(), any())).thenReturn(Optional.empty());
+
+        SaveEngineRubriqueRequest req = new SaveEngineRubriqueRequest(
+            "TEST_GAIN", "Test", null, 1, "GAIN", "MONTANT_FIXE", null,
+            "some_key", null, null, null, null, null, false, 0, true, "EMPLOYEE");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> service.createRubrique(179L, req));
+        assertEquals("Payeur uniquement pour la nature COTISATION", e.getMessage());
+        verify(rubriqueRepo, never()).save(any());
+    }
+
+    @Test
+    void createRubrique_cotisationWithValidPayer_isSaved() {
+        lenient().when(rubriqueRepo.findByCountryIdAndCode(any(), any())).thenReturn(Optional.empty());
+
+        SaveEngineRubriqueRequest req = new SaveEngineRubriqueRequest(
+            "TEST_COTIS2", "Test", null, 3, "COTISATION", "TAUX_PCT", "STRATE_1",
+            "some_key", null, null, null, null, null, false, 0, true, "employee");
+
+        PayrollRubriqueDef r = service.createRubrique(179L, req);
+
+        assertEquals("EMPLOYEE", r.getPayer());
     }
 }

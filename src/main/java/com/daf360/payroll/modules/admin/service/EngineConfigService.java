@@ -65,7 +65,10 @@ public class EngineConfigService {
     private static final Set<String> SYSTEM_VARIABLES = Set.of(
             "JOURS_OUVRES", "MOIS", "ANNEE",
             "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
-            "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "SELF");
+            "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "SELF",
+            // Seeded by PayrollOrchestrator#applyEmployeeBaseSalary from the employee's
+            // own employee_payroll_config row — see 2026-11-06-engine-run-irpp-css-net-fix.
+            "IS_MARRIED", "CHILDREN_COUNT");
 
     /** Noms en majuscules d'une formule, hors appels de méthode (T(…), .max(…)). */
     private static final Pattern FORMULA_NAME = Pattern.compile("(?<![\\w.])([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");
@@ -256,6 +259,17 @@ public class EngineConfigService {
         int order = req.displayOrder() == null ? 0 : req.displayOrder();
         if (order < 0) throw new IllegalArgumentException("Ordre d'affichage négatif");
 
+        String payer = trim(req.payer());
+        if (payer != null) payer = payer.toUpperCase();
+        if ("COTISATION".equals(nature.toUpperCase())) {
+            if (payer == null) throw new IllegalArgumentException("Nature COTISATION : payeur (EMPLOYEE/EMPLOYER) obligatoire");
+        } else if (payer != null) {
+            throw new IllegalArgumentException("Payeur uniquement pour la nature COTISATION");
+        }
+        if (payer != null && !Set.of("EMPLOYEE", "EMPLOYER").contains(payer)) {
+            throw new IllegalArgumentException("Payeur invalide : EMPLOYEE ou EMPLOYER");
+        }
+
         r.setLabelFr(label);
         r.setLabelEn(trim(req.labelEn()));
         r.setStrate(strate);
@@ -271,6 +285,7 @@ public class EngineConfigService {
         r.setProrataApplicable(Boolean.TRUE.equals(req.prorataApplicable()));
         r.setDisplayOrder(order);
         r.setActive(req.active() == null || req.active());
+        r.setPayer(payer);
     }
 
     // ── Utilitaires ──────────────────────────────────────────────────────────

@@ -24,5 +24,7 @@ public record SaveEngineRubriqueRequest(
         String periodicite,
         Boolean prorataApplicable,
         Integer displayOrder,
-        Boolean active
+        Boolean active,
+        /** EMPLOYEE | EMPLOYER | null — required when nature=COTISATION, ignored otherwise. */
+        String payer
 ) {}
