@@ -87,10 +87,15 @@ public class RefController {
 
     public record FxRateDto(String currencyCode, java.math.BigDecimal rateToEur) {}
 
-    /** Currencies the simulator's amount field can offer, with their cached rate-to-EUR --
-     *  the frontend never does its own FX math, it only needs the list of available codes. */
+    /** Currencies the simulator's and employee-config's amount fields can offer, with their
+     *  cached rate-to-EUR -- the frontend never does its own FX math, it only needs the list
+     *  of available codes. */
     @GetMapping("/fx-rates")
-    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.RUN_SIMULATION + "')")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_PARAMSET + "','"
+        + PermissionCatalog.RUN_SIMULATION + "','"
+        + PermissionCatalog.VIEW_EMPLOYEE_CONFIG + "','"
+        + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
     public List<FxRateDto> listFxRates() {
         return fxRateRepository.findAll().stream()
                 .map(r -> new FxRateDto(r.getCurrencyCode(), r.getRateToEur()))
