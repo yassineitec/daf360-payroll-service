@@ -1,5 +1,7 @@
 package com.daf360.payroll.modules.ref.controller;
 
+import com.daf360.payroll.modules.payroll.entity.PayrollCountry;
+import com.daf360.payroll.modules.payroll.repository.PayrollCountryRepository;
 import com.daf360.payroll.modules.ref.entity.PaysRef;
 import com.daf360.payroll.modules.ref.entity.UsersRef;
 import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
@@ -10,7 +12,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/payroll/ref")
@@ -19,19 +24,53 @@ public class RefController {
     private final PaysRefRepository paysRefRepository;
     private final UsersRefRepository usersRefRepository;
     private final ProfileSyncService profileSyncService;
+    private final PayrollCountryRepository payrollCountryRepository;
 
     public RefController(PaysRefRepository paysRefRepository,
                          UsersRefRepository usersRefRepository,
-                         ProfileSyncService profileSyncService) {
+                         ProfileSyncService profileSyncService,
+                         PayrollCountryRepository payrollCountryRepository) {
         this.paysRefRepository = paysRefRepository;
         this.usersRefRepository = usersRefRepository;
         this.profileSyncService = profileSyncService;
+        this.payrollCountryRepository = payrollCountryRepository;
     }
 
     @GetMapping("/pays")
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.RUN_SIMULATION + "')")
     public List<PaysRef> listPays() {
         return paysRefRepository.findAll();
+    }
+
+    /**
+     * Les pays du référentiel configurés et actifs dans le moteur de paie (carte « Pays de
+     * paie » de /payroll/admin) — ceux qu'on propose dans les écrans de paie. Ouvert à
+     * chaque code qui donne accès à un de ces écrans (résultats, moteur, calibration,
+     * budget, configuration salarié, fiches de paie…) : ce ne sont que des libellés de
+     * référentiel, pas la configuration elle-même. RH_MANAGE_PAYSLIPS est un code RH,
+     * absent du PermissionCatalog (même cas qu'UPDATE_USER sur /sync).
+     */
+    @GetMapping("/pays/payroll")
+    @PreAuthorize("hasAnyAuthority('"
+        + PermissionCatalog.VIEW_PARAMSET + "','"
+        + PermissionCatalog.RUN_SIMULATION + "','"
+        + PermissionCatalog.VIEW_RESULTS + "','"
+        + PermissionCatalog.RUN_ENGINE + "','"
+        + PermissionCatalog.RUN_CALIBRATION + "','"
+        + PermissionCatalog.VIEW_BUDGET_AGGREGATE + "','"
+        + PermissionCatalog.VIEW_AGGREGATE + "','"
+        + PermissionCatalog.EXPORT_BUDGET + "','"
+        + PermissionCatalog.VIEW_EMPLOYEE_CONFIG + "','"
+        + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "','"
+        + PermissionCatalog.MANAGE_COUNTRIES + "','"
+        + PermissionCatalog.SUPER_ADMIN + "', 'RH_MANAGE_PAYSLIPS')")
+    public List<PaysRef> listPayrollPays() {
+        Set<Long> active = payrollCountryRepository.findByActiveTrue().stream()
+                .map(PayrollCountry::getPaysId)
+                .collect(Collectors.toSet());
+        return paysRefRepository.findAllById(active).stream()
+                .sorted(Comparator.comparing(PaysRef::getFrenchLabel, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
     }
 
     @GetMapping("/users")
