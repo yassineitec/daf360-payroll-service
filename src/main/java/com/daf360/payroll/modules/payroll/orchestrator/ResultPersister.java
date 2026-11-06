@@ -67,16 +67,23 @@ public class ResultPersister {
         BigDecimal strate1 = nvl(ctx.getVariable("STRATE_1"));
         BigDecimal strate2 = nvl(ctx.getVariable("STRATE_2"));
         BigDecimal gross = strate1.add(strate2);
-        // Charges PATRONALES : CHARGES_ER, injecté par l'orchestrateur depuis les taux du jeu de
-        // paramètres actif (TopologicalEvaluator, voir PayrollOrchestrator#injectChargeVariables).
-        // Auparavant STRATE_3 était enregistré ici — c'est la CNSS SALARIALE (retenue sur le
-        // salaire), pas une charge de l'employeur : le coût employeur s'en trouvait faux.
-        // Sans taux employeur chargés (aucun jeu actif), la charge vaut 0 : le coût = le brut.
-        BigDecimal employerCharges = ctx.hasVariable("CHARGES_ER")
-            ? nvl(ctx.getVariable("CHARGES_ER")).setScale(2, RoundingMode.HALF_UP)
-            : BigDecimal.ZERO;
+
+        // Employee/employer COTISATION totals come from the rubriques actually computed
+        // this run, filtered by `payer` — NOT from CHARGES_ER (the old-model charge
+        // bridge's injected variable). The bridge still runs (PayrollOrchestrator#
+        // injectChargeVariables, best-effort) but nothing here reads its output anymore:
+        // every country's own CNSS/TFP/FOPROLOS/AT/SI/SHIF rubriques are now summed
+        // directly, so a country-specific charge (TFP, FOPROLOS — no old-model
+        // equivalent at all) is no longer silently dropped from the total.
+        BigDecimal employeeCharges = sumByNatureAndPayer(items, "COTISATION", "EMPLOYEE");
+        BigDecimal employerCharges = sumByNatureAndPayer(items, "COTISATION", "EMPLOYER");
+
+        // Taxes (IRPP/CSS/INCOME_TAX) are strate 5 by construction — STRATE_4 is the new
+        // intermediate assiette they read, never itself a payable amount.
+        BigDecimal taxes = nvl(ctx.getVariable("STRATE_5"));
+
         result.setAggregateGross(gross);
-        result.setAggregateNet(nvl(ctx.getVariable("STRATE_5")));
+        result.setAggregateNet(gross.subtract(employeeCharges).subtract(taxes));
         result.setAggregateEmployerCharges(employerCharges);
         result.setAggregateIrpp(ctx.getVariable("IRPP"));
         result.setLoadedCost(gross.add(employerCharges));
@@ -88,6 +95,14 @@ public class ResultPersister {
         }
 
         return resultRepo.save(result);
+    }
+
+    private BigDecimal sumByNatureAndPayer(List<RubriqueResultItem> items, String nature, String payer) {
+        return items.stream()
+            .filter(i -> nature.equals(i.getNature()) && payer.equals(i.getPayer()))
+            .map(RubriqueResultItem::getAmount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal nvl(BigDecimal v) {
