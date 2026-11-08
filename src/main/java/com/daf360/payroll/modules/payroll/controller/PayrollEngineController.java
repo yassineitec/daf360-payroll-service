@@ -177,7 +177,9 @@ public class PayrollEngineController {
             // Collaborateurs distincts (sur une période de plusieurs mois, chacun une fois).
             (int) rows.stream().map(PayrollResult::getEmployeeId).distinct().count(),
             sum(rows, PayrollResult::getAggregateGross),
-            sum(rows, PayrollResult::getStrate5),
+            // Net = aggregateNet (brut − cotisations salariales − impôts) : depuis le 2026-11-06
+            // la strate 5 porte les impôts, plus le net.
+            sum(rows, r -> r.getAggregateNet() != null ? r.getAggregateNet() : r.getStrate5()),
             sum(rows, PayrollResult::getLoadedCost),
             (int) rows.stream().filter(r -> !r.isConvergenceOk()).count(),
             rows.stream().map(PayrollResult::getCalculatedAt).filter(Objects::nonNull)

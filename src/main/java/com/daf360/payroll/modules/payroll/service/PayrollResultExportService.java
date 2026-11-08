@@ -105,7 +105,7 @@ public class PayrollResultExportService {
     @Transactional(readOnly = true)
     public ExportFile exportHistoryXlsx(Long employeeId, Collection<String> ids, ExportLang lang) {
         List<List<Object>> rows = historyResults(employeeId, ids).stream().map(r -> Arrays.<Object>asList(
-                period(r, lang), historyGross(r), r.getStrate3(), historyIrpp(r), r.getStrate5(), calculatedOn(r)
+                period(r, lang), historyGross(r), r.getStrate3(), historyIrpp(r), netOf(r), calculatedOn(r)
         )).toList();
         byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Charge salariale", "Salary cost"), historyHeaders(lang), rows)));
         return ExportFile.xlsx("Charge_salariale_" + employeeId + ".xlsx", bytes);
@@ -129,7 +129,7 @@ public class PayrollResultExportService {
         StringBuilder body = new StringBuilder();
         BigDecimal tGross = BigDecimal.ZERO, tCnss = BigDecimal.ZERO, tIrpp = BigDecimal.ZERO, tNet = BigDecimal.ZERO;
         for (PayrollResult r : results) {
-            BigDecimal gross = historyGross(r), cnss = nz(r.getStrate3()), irpp = nz(historyIrpp(r)), net = nz(r.getStrate5());
+            BigDecimal gross = historyGross(r), cnss = nz(r.getStrate3()), irpp = nz(historyIrpp(r)), net = nz(netOf(r));
             tGross = tGross.add(gross); tCnss = tCnss.add(cnss); tIrpp = tIrpp.add(irpp); tNet = tNet.add(net);
             String calc = calculatedOn(r);
             body.append("<tr><td>").append(escape(period(r, lang))).append("</td>")
@@ -212,6 +212,13 @@ public class PayrollResultExportService {
         return r.getAggregateGross() != null ? r.getAggregateGross() : nz(r.getStrate1()).add(nz(r.getStrate2()));
     }
 
+    /** Net à payer : aggregateNet (brut − cotisations salariales − impôts). Depuis le 2026-11-06
+     *  la strate 5 porte les impôts, plus le net ; repli sur elle seulement si aggregateNet manque
+     *  (avant, ResultPersister y recopiait déjà la strate 5, alors le net). */
+    private static BigDecimal netOf(PayrollResult r) {
+        return r.getAggregateNet() != null ? r.getAggregateNet() : r.getStrate5();
+    }
+
     private static BigDecimal historyIrpp(PayrollResult r) {
         return r.getAggregateIrpp() != null ? r.getAggregateIrpp() : r.getStrate4();
     }
@@ -245,7 +252,7 @@ public class PayrollResultExportService {
         BigDecimal gross = r.getAggregateGross() != null ? r.getAggregateGross() : nz(r.getStrate1()).add(nz(r.getStrate2()));
         BigDecimal cnss  = nz(r.getStrate3());
         BigDecimal irpp  = r.getAggregateIrpp() != null ? r.getAggregateIrpp() : nz(r.getStrate4());
-        BigDecimal net   = nz(r.getStrate5());
+        BigDecimal net   = nz(netOf(r));
 
         StringBuilder body = new StringBuilder();
         for (Line l : lines) {
