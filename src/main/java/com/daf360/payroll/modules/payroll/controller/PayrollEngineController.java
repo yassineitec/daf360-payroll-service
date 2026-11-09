@@ -37,7 +37,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -142,21 +141,16 @@ public class PayrollEngineController {
     }
 
     /**
-     * Sans période : le dernier mois calculé du pays (comportement historique). Avec une
-     * période ({@code from} et/ou {@code to}) : tous les mois qu'elle couvre, additionnés.
-     * {@code employeeIds} non vide restreint les totaux à ces collaborateurs.
+     * Sans période : TOUS les mois calculés du pays, additionnés (avant le 2026-11-09 : le
+     * seul dernier mois calculé). Avec une période ({@code from} et/ou {@code to}) : les mois
+     * qu'elle couvre. {@code employeeIds} non vide restreint les totaux à ces collaborateurs.
+     * {@code periodYear}/{@code periodMonth} du résumé = dernier mois inclus.
      */
     private PayrollResultsSummaryDto summarize(Long paysId, String currency,
                                                LocalDate from, LocalDate to, List<Long> employeeIds) {
         Set<Long> only = employeeIds == null || employeeIds.isEmpty() ? null : new HashSet<>(employeeIds);
-        List<PayrollResult> raw;
-        if (from == null && to == null) {
-            Optional<PayrollResult> latest = resultRepo.findTopByPaysIdOrderByPeriodYearDescPeriodMonthDesc(paysId);
-            raw = latest.isEmpty() ? List.of() : resultRepo.findByPaysIdAndPeriodYearAndPeriodMonth(
-                paysId, latest.get().getPeriodYear(), latest.get().getPeriodMonth());
-        } else {
-            raw = resultRepo.findByPaysIdAndPeriodKeyBetween(paysId, fromKey(from), toKey(to));
-        }
+        // Bornes absentes = tout l'historique (fromKey(null) = 0, toKey(null) = 999912).
+        List<PayrollResult> raw = resultRepo.findByPaysIdAndPeriodKeyBetween(paysId, fromKey(from), toKey(to));
         if (only != null) raw = raw.stream().filter(r -> only.contains(r.getEmployeeId())).toList();
         if (raw.isEmpty()) {
             return new PayrollResultsSummaryDto(paysId, currency, null, null, 0,
