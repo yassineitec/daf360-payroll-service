@@ -305,6 +305,7 @@ public class ParameterSetService {
 
     private void saveRates(Long psId, List<SocialChargeRateDto> dtos) {
         rateRepo.deleteByParameterSetId(psId);
+        rateRepo.flush(); // voir saveRubriques
         List<SocialChargeRate> entities = dtos.stream().map(d -> {
             SocialChargeRate r = new SocialChargeRate();
             r.setParameterSetId(psId);
@@ -326,6 +327,7 @@ public class ParameterSetService {
 
     private void saveBenefits(Long psId, List<BenefitCatalogueDto> dtos) {
         benefitRepo.deleteByParameterSetId(psId);
+        benefitRepo.flush(); // voir saveRubriques
         List<BenefitCatalogue> entities = dtos.stream().map(d -> {
             BenefitCatalogue b = new BenefitCatalogue();
             b.setParameterSetId(psId);
@@ -345,6 +347,9 @@ public class ParameterSetService {
 
     private void saveRubriques(Long psId, List<SavePayrollRubriqueRequest> dtos) {
         rubriqueRepo.deleteByParameterSetId(psId);
+        // Les DELETE dérivés sont différés au flush, alors que les INSERT (id IDENTITY) partent
+        // tout de suite : sans ce flush, réenregistrer un code existant viole UX_rubrique_ps_code.
+        rubriqueRepo.flush();
         List<PayrollRubrique> entities = dtos.stream().map(d -> {
             PayrollRubrique r = new PayrollRubrique();
             r.setParameterSetId(psId);
