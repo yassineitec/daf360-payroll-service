@@ -171,6 +171,50 @@ class PayrollOrchestratorTunisiaEngineFixTest {
     }
 
     @Test
+    void noSavedSalary_refusesTheCalculation_insteadOfUsingTheCountryDefault() {
+        PayrollCountry country = new PayrollCountry();
+        country.setId(7L);
+        country.setPaysId(179L);
+        lenient().when(countryRepo.findByPaysIdAndActiveTrue(179L)).thenReturn(Optional.of(country));
+
+        PayrollParamSet paramSet = new PayrollParamSet();
+        paramSet.setId(7L);
+        paramSet.setCountryId(7L);
+        paramSet.setStatus("ACTIVE");
+        paramSet.setVersionNumber(1);
+        paramSet.setEffectiveDate(LocalDate.of(2026, 1, 1));
+        paramSet.setParameters(TUNISIA_PARAMETERS);
+        lenient().when(paramSetRepo.findByCountryIdAndStatus(7L, "ACTIVE")).thenReturn(Optional.of(paramSet));
+        lenient().when(rubriqueRepo.findByCountryIdAndActiveTrue(7L)).thenReturn(tunisiaRubriques());
+
+        // Aucune configuration enregistrée pour ce collaborateur.
+        when(employeeConfigRepo.findByProfileUserId(3L)).thenReturn(Optional.empty());
+
+        PayrollOrchestrator orchestrator = new PayrollOrchestrator(
+            new ContextLoader(countryRepo, paramSetRepo, new ObjectMapper()),
+            new SequenceValidator(),
+            new CalculationDispatcher(List.of(
+                new MontantFixeCalculator(), new TauxPctCalculator(), new BaremeProgressifCalculator(),
+                new AnnualiseBaremeCalculator(), new FormuleCalculator(), new NewtonRaphsonCalculator())),
+            new SystemVariableAggregator(),
+            new ResultPersister(resultRepo, new ObjectMapper()),
+            forexService,
+            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo);
+
+        RunPayrollRequest request = new RunPayrollRequest();
+        request.setEmployeeId(3L);
+        request.setPaysId(179L);
+        request.setPeriodYear(2026);
+        request.setPeriodMonth(1);
+        request.setContractTypeCode("CDI");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> orchestrator.run(request))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Salaire non renseigné");
+        verify(resultRepo, never()).save(any());
+    }
+
+    @Test
     void egyptIncomeTax_noLongerHardZero_butNotClaimedCorrect() {
         PayrollCountry country = new PayrollCountry();
         country.setId(8L);

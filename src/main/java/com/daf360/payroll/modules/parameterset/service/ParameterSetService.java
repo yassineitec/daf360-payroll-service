@@ -159,22 +159,22 @@ public class ParameterSetService {
 
     @Transactional
     public ParameterSetDto updateSocialChargeRates(Long id, List<SocialChargeRateDto> rates) {
-        // Comme les avantages : un jeu soumis, actif ou archivé ne se modifie plus (409).
-        assertStatus(findOrThrow(id), "DRAFT");
+        // Modifiable quel que soit le statut (brouillon, soumis, actif, archivé) : choix
+        // métier du 2026-11-10 — l'édition directe depuis /payroll/admin prime sur le
+        // circuit d'approbation. Un jeu ACTIF modifié s'applique aux prochains calculs.
+        findOrThrow(id);
         saveRates(id, rates);
         return toDto(findOrThrow(id));
     }
 
     /**
-     * Remplace les avantages en nature d'un jeu. Réservé aux jeux en brouillon (DRAFT) : un
-     * jeu soumis, actif ou archivé a déjà été (ou est en train d'être) validé tel quel —
-     * le modifier contournerait l'approbation RH + Finance. Pour changer les avantages d'un
-     * jeu actif, on crée un nouveau jeu.
+     * Remplace les avantages en nature d'un jeu, quel que soit son statut (brouillon, soumis,
+     * actif, archivé) — choix métier du 2026-11-10 : l'édition directe depuis /payroll/admin
+     * prime sur le circuit d'approbation. Un jeu ACTIF modifié s'applique aux prochains calculs.
      */
     @Transactional
     public ParameterSetDto updateBenefits(Long id, List<BenefitCatalogueDto> benefits) {
-        ParameterSet ps = findOrThrow(id);
-        assertStatus(ps, "DRAFT");
+        findOrThrow(id);
         List<BenefitCatalogueDto> list = benefits == null ? List.of() : benefits;
         java.util.Set<String> codes = new java.util.HashSet<>();
         for (BenefitCatalogueDto b : list) {
@@ -242,7 +242,8 @@ public class ParameterSetService {
 
     @Transactional
     public ParameterSetDto updateRubriques(Long id, List<SavePayrollRubriqueRequest> rubriques) {
-        assertStatus(findOrThrow(id), "DRAFT");
+        // Modifiable quel que soit le statut (voir updateSocialChargeRates).
+        findOrThrow(id);
         saveRubriques(id, rubriques);
         return toDto(findOrThrow(id));
     }

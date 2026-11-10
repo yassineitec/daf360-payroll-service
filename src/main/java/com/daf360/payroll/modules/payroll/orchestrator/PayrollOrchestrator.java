@@ -246,7 +246,7 @@ public class PayrollOrchestrator {
      * code est proposé à partir du libellé (« Salaire de base » → SALAIRE_DE_BASE), il ne doit
      * pas décider du résultat. Sa clé de montant est surchargée dans la copie des paramètres
      * propre à ce calcul (le jeu de paramètres enregistré n'est pas modifié). Sans
-     * configuration ou sans salaire saisi, la valeur du jeu de paramètres reste utilisée.
+     * configuration ou sans salaire saisi, le calcul est refusé (« Salaire non renseigné »).
      */
     private void applyEmployeeBaseSalary(ExecutionContext ctx, List<PayrollRubriqueDef> rubriques, Long employeeId) {
         if (employeeId == null) return;
@@ -260,10 +260,15 @@ public class PayrollOrchestrator {
         ctx.putVariable("IS_MARRIED", isMarried ? BigDecimal.ONE : BigDecimal.ZERO);
         ctx.putVariable("CHILDREN_COUNT", BigDecimal.valueOf(childrenCount));
 
+        // Sans salaire brut enregistré, le calcul est REFUSÉ (400) au lieu de retomber sur le
+        // montant unique du jeu de paramètres : un bulletin calculé sur un salaire fictif
+        // passait pour juste. Choix métier du 2026-11-10.
         BigDecimal gross = config != null ? config.getCurrentGrossSalary() : null;
         if (gross == null || gross.signum() <= 0) {
-            log.info("applyEmployeeBaseSalary: pas de salaire configuré pour l'employé {} — montant du jeu de paramètres", employeeId);
-            return;
+            log.info("applyEmployeeBaseSalary: pas de salaire configuré pour l'employé {} — calcul refusé", employeeId);
+            throw new IllegalArgumentException(
+                "Salaire non renseigné pour ce collaborateur : saisissez son salaire brut dans "
+                + "« Salaires des collaborateurs » avant de lancer le calcul.");
         }
         baseSalaryRubrique(rubriques)
             .ifPresent(r -> {

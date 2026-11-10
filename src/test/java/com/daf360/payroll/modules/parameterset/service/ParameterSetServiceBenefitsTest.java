@@ -81,12 +81,14 @@ class ParameterSetServiceBenefitsTest {
     }
 
     @Test
-    void updateBenefits_activeSet_isRefused() {
+    void updateBenefits_activeSet_isAllowed() {
+        // Depuis le 2026-11-10, un jeu actif (ou archivé) se modifie directement.
         givenSet("ACTIVE");
 
-        assertThrows(IllegalStateException.class,
-                () -> service.updateBenefits(1L, List.of(benefit("MEAL", "Repas", "10"))));
-        verify(benefitRepo, never()).saveAll(any());
+        service.updateBenefits(1L, List.of(benefit("MEAL", "Repas", "10")));
+
+        verify(benefitRepo).deleteByParameterSetId(1L);
+        verify(benefitRepo).saveAll(any());
     }
 
     @Test

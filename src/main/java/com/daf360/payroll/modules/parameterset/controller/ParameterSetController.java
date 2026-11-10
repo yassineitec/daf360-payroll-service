@@ -118,7 +118,7 @@ public class ParameterSetController {
         return service.updateSocialChargeRates(id, rates);
     }
 
-    /** Remplace les avantages en nature d'un jeu en brouillon (409 sinon). */
+    /** Remplace les avantages en nature d'un jeu, quel que soit son statut. */
     @PutMapping("/{id}/benefits")
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.APPROVE_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET_FAST_TRACK + "')")
     public ParameterSetDto updateBenefits(@PathVariable Long id,
