@@ -109,8 +109,9 @@ public class ParameterSetService {
      */
     @Transactional
     public ParameterSetDto updateFields(Long id, UpdateParameterSetFieldsRequest req) {
+        // Modifiable quel que soit le statut, comme les charges (voir updateSocialChargeRates) :
+        // un jeu ACTIF modifié s'applique aux prochains calculs.
         ParameterSet ps = findOrThrow(id);
-        assertStatus(ps, "DRAFT");
         validateIrppBrackets(req.irppBrackets());
         if (req.maxConvergenceIterations() != null && req.maxConvergenceIterations() < 1)
             throw new IllegalArgumentException("Nombre maximal d'itérations : au moins 1");

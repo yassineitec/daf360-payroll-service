@@ -103,7 +103,7 @@ public class ParameterSetController {
     }
 
     /** Met à jour le barème IRPP, la convergence et les déductions (abattement, situation
-     *  familiale) d'un jeu en brouillon (409 sinon) — sans toucher ses taux/avantages/rubriques. */
+     *  familiale) d'un jeu, quel que soit son statut — sans toucher ses taux/avantages/rubriques. */
     @PutMapping("/{id}/fields")
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.APPROVE_PARAMSET + "','" + PermissionCatalog.APPROVE_PARAMSET_FAST_TRACK + "')")
     public ParameterSetDto updateFields(@PathVariable Long id,
