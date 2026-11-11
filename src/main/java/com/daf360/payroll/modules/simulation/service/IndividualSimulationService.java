@@ -53,8 +53,48 @@ public class IndividualSimulationService {
         this.hrClient = hrClient;
     }
 
+    /**
+     * One simulation's figures, before (or instead of) persisting them. {@link #simulate} saves
+     * it as a {@code simulation_results} row; {@link #compute} alone backs previews that must not
+     * fill the simulations history (Rémunération form, recalculated on every keystroke).
+     */
+    public record Computation(
+            PayrollSimulatorService.PayrollResult result,
+            ParameterSet parameterSet,
+            List<BenefitCatalogue> benefits,
+            FxSnapshotService.FxSnapshot fx,
+            String contractType,
+            SimulationMode mode,
+            boolean currencyConverted,
+            java.math.BigDecimal rawInputNet,
+            java.math.BigDecimal rawInputGross,
+            String grade,
+            String discipline,
+            Boolean isMarried,
+            Integer children
+    ) {}
+
     @Transactional
     public SimulationResultDto simulate(SimulationRequest req, Long simulatedBy) {
+        Computation c = compute(req);
+        PayrollSimulatorService.PayrollResult result = c.result();
+        ParameterSet ps = c.parameterSet();
+        List<BenefitCatalogue> benefits = c.benefits();
+        FxSnapshotService.FxSnapshot fx = c.fx();
+        SimulationMode mode = c.mode();
+        String contractType = c.contractType();
+        boolean currencyConverted = c.currencyConverted();
+        java.math.BigDecimal rawInputNet = c.rawInputNet();
+        java.math.BigDecimal rawInputGross = c.rawInputGross();
+        String grade = c.grade();
+        String discipline = c.discipline();
+        return persist(req, simulatedBy, result, ps, benefits, fx, mode, contractType,
+                currencyConverted, rawInputNet, rawInputGross, grade, discipline);
+    }
+
+    /** The whole calculation of {@link #simulate}, nothing written. */
+    @Transactional(readOnly = true)
+    public Computation compute(SimulationRequest req) {
 
         // C4 — profile hydration: if profileUserId is set, pull contractType/grade/discipline
         // from the HR service so callers don't have to repeat data already on the employee card.
@@ -76,6 +116,18 @@ public class IndividualSimulationService {
         // Grade / discipline: prefer explicit request values; fall back to HR profile
         String grade      = firstNonBlank(req.grade(),      profile.map(HrEmployeeDto::grade).orElse(null));
         String discipline = firstNonBlank(req.discipline(),  profile.map(HrEmployeeDto::discipline).orElse(null));
+
+        // Family situation (IRPP family deduction): for an EMPLOYEE, the RH file is the source of
+        // truth — same rule as the payroll engine (EmployeeFamilyResolver). Before, the request's
+        // checkbox/count won even when nobody filled them in, so a married employee with children
+        // was simulated as single with none. The request values only serve a candidate, or an
+        // employee whose RH file could not be read (older RH build / RH unreachable).
+        Boolean isMarried = req.isMarried();
+        Integer children  = req.children();
+        if (profile.isPresent() && profile.get().married() != null) {
+            isMarried = profile.get().married();
+            children  = profile.get().childrenCount() != null ? profile.get().childrenCount() : 0;
+        }
 
         ParameterSet ps = paramSetService.loadActiveEntity(req.paysId());
         List<SocialChargeRate> rates = paramSetService.loadRates(ps.getId());
@@ -116,16 +168,26 @@ public class IndividualSimulationService {
                         "Le champ inputGross est requis et doit être positif en mode BRUT_TO_NET.");
             result = simulatorService.computeFromGross(
                     convertedInputGross, ps, rates, benefits, rubriques, contractType, joursTravailes,
-                    req.isMarried(), req.children());
+                    isMarried, children);
         } else {
             if (convertedInputNet == null || convertedInputNet.compareTo(java.math.BigDecimal.ZERO) <= 0)
                 throw new IllegalArgumentException(
                         "Le champ inputNet est requis et doit être positif en mode NET_TO_BRUT.");
             result = simulatorService.computeFromNet(
                     convertedInputNet, ps, rates, benefits, rubriques, contractType, joursTravailes,
-                    req.isMarried(), req.children());
+                    isMarried, children);
         }
 
+        return new Computation(result, ps, benefits, fx, contractType, mode, currencyConverted,
+                rawInputNet, rawInputGross, grade, discipline, isMarried, children);
+    }
+
+    private SimulationResultDto persist(SimulationRequest req, Long simulatedBy,
+                                        PayrollSimulatorService.PayrollResult result, ParameterSet ps,
+                                        List<BenefitCatalogue> benefits, FxSnapshotService.FxSnapshot fx,
+                                        SimulationMode mode, String contractType, boolean currencyConverted,
+                                        java.math.BigDecimal rawInputNet, java.math.BigDecimal rawInputGross,
+                                        String grade, String discipline) {
         // S1 — net versé: the user's target in NET_TO_BRUT, the computed net in BRUT_TO_NET
         java.math.BigDecimal netInHand = result.netInHand();
 

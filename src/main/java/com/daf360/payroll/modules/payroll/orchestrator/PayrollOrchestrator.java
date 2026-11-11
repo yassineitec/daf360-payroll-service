@@ -1,7 +1,10 @@
 package com.daf360.payroll.modules.payroll.orchestrator;
 
 import com.daf360.payroll.engine.TopologicalEvaluator;
+import com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfig;
 import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollConfigRepository;
+import com.daf360.payroll.modules.employeeconfig.service.ContractTypeCodes;
+import com.daf360.payroll.modules.employeeconfig.service.EmployeeFamilyResolver;
 import com.daf360.payroll.modules.parameterset.entity.SocialChargeRate;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.payroll.calculator.ExecutionContext;
@@ -53,6 +56,7 @@ public class PayrollOrchestrator {
     private final TopologicalEvaluator topologicalEvaluator;
     private final ParameterSetService parameterSetService;
     private final EmployeePayrollConfigRepository employeeConfigRepo;
+    private final EmployeeFamilyResolver familyResolver;
 
     public PayrollOrchestrator(ContextLoader contextLoader,
                                 SequenceValidator sequenceValidator,
@@ -64,7 +68,8 @@ public class PayrollOrchestrator {
                                 PayrollCountryRepository countryRepo,
                                 TopologicalEvaluator topologicalEvaluator,
                                 ParameterSetService parameterSetService,
-                                EmployeePayrollConfigRepository employeeConfigRepo) {
+                                EmployeePayrollConfigRepository employeeConfigRepo,
+                                EmployeeFamilyResolver familyResolver) {
         this.contextLoader = contextLoader;
         this.sequenceValidator = sequenceValidator;
         this.dispatcher = dispatcher;
@@ -76,10 +81,73 @@ public class PayrollOrchestrator {
         this.topologicalEvaluator = topologicalEvaluator;
         this.parameterSetService = parameterSetService;
         this.employeeConfigRepo = employeeConfigRepo;
+        this.familyResolver = familyResolver;
     }
 
+    /** Everything one calculation produced, before (or instead of) persisting it. */
+    private record Computation(ExecutionContext ctx, List<RubriqueResultItem> results, Long paramSetId,
+                               boolean convergenceOk, int totalIterations) {
+        Integer iterationsOrNull() { return totalIterations > 0 ? totalIterations : null; }
+    }
+
+    /** A real payroll run: computes, then INSERTs an immutable {@code payroll_results} row. */
     @Transactional
     public RunPayrollResponse run(RunPayrollRequest request) {
+        Computation c = compute(request, null);
+
+        // 5. Persist result — all fields set before the single INSERT; no UPDATE follows
+        PayrollResult saved = persister.persist(
+            c.ctx(), c.results(), c.paramSetId(),
+            request.getTriggeredBy(),
+            c.convergenceOk(),
+            c.iterationsOrNull()
+        );
+
+        // 7. Persist forex snapshots — fire-and-forget; don't fail the run if forex fails
+        try {
+            forexService.fetchAndPersist(saved.getId(), request.getPaysId());
+        } catch (Exception ignored) {
+            // forex snapshot failure must never abort a payroll run
+        }
+
+        return toResponse(saved, c);
+    }
+
+    /**
+     * Exactly the calculation {@link #run} performs — same rubriques, same aggregation — but
+     * with {@code grossSalary} as the employee's base salary and NOTHING written (no
+     * {@code payroll_results} row, no forex snapshot). Backs "Calculer le net" on the
+     * employee's payroll configuration (Rémunération tab / payroll employee-config), so the
+     * net shown there is the net the payslip will show. {@code resultId} is null.
+     */
+    @Transactional(readOnly = true)
+    public RunPayrollResponse preview(RunPayrollRequest request, BigDecimal grossSalary) {
+        if (grossSalary == null || grossSalary.signum() <= 0) {
+            throw new IllegalArgumentException("Le salaire brut doit être strictement positif.");
+        }
+        Computation c = compute(request, grossSalary);
+        PayrollResult unsaved = persister.build(
+            c.ctx(), c.results(), c.paramSetId(), request.getTriggeredBy(),
+            c.convergenceOk(), c.iterationsOrNull());
+        return toResponse(unsaved, c);
+    }
+
+    /**
+     * @param grossOverride null = a real run: the employee's saved configuration supplies the
+     *                      base salary and must exist, be for this country and carry a gross.
+     *                      Non-null = a preview with that (working-currency) base salary.
+     */
+    private Computation compute(RunPayrollRequest request, BigDecimal grossOverride) {
+        EmployeePayrollConfig config = request.getEmployeeId() == null ? null
+            : employeeConfigRepo.findByProfileUserId(request.getEmployeeId()).orElse(null);
+
+        // Contract: the caller's explicit choice, otherwise the one saved on the employee's
+        // payroll configuration (which may deliberately differ from the RH profile), otherwise
+        // CDI. Always normalised (legacy RH codes PERMANENT/FIXED_TERM/INTERN → CDI/CDD/STAGE).
+        String requested = request.getContractTypeCode();
+        if ((requested == null || requested.isBlank()) && config != null) requested = config.getContractType();
+        request.setContractTypeCode(ContractTypeCodes.normalize(requested));
+
         // 1. Load context (country, param set, system vars)
         ExecutionContext ctx = contextLoader.load(request);
         Long paramSetId = contextLoader.resolveParamSetId(request.getPaysId());
@@ -98,15 +166,15 @@ public class PayrollOrchestrator {
         sequenceValidator.validate(rubriques);
 
         // 3b. Salaire de base DU COLLABORATEUR (« Salaires des collaborateurs ») à la place du
-        //     montant unique du jeu de paramètres — voir applyEmployeeBaseSalary.
-        applyEmployeeBaseSalary(ctx, rubriques, request.getEmployeeId());
+        //     montant unique du jeu de paramètres — voir applyEmployeeInputs.
+        applyEmployeeInputs(ctx, rubriques, request.getEmployeeId(), config, grossOverride);
 
         // 4. Execute each rubrique in order
         List<RubriqueResultItem> results = new ArrayList<>();
         boolean convergenceOk = true;
         int totalIterations = 0;
 
-        String contractType = request.getContractTypeCode() != null ? request.getContractTypeCode() : "CDI";
+        String contractType = request.getContractTypeCode();
         int joursTravailes  = request.getJoursOuvresMois() != null ? request.getJoursOuvresMois().intValue() : 22;
         boolean chargesInjected = false;
 
@@ -146,25 +214,16 @@ public class PayrollOrchestrator {
         //     les vraies charges patronales (CHARGES_ER, lues par ResultPersister).
         if (!chargesInjected && ctx.hasVariable("BRUT")) {
             injectChargeVariables(ctx, request.getPaysId(), contractType, joursTravailes);
-            chargesInjected = true;
         }
 
-        // 5. Persist result — all fields set before the single INSERT; no UPDATE follows
-        PayrollResult saved = persister.persist(
-            ctx, results, paramSetId,
-            request.getTriggeredBy(),
-            convergenceOk,
-            totalIterations > 0 ? totalIterations : null
-        );
+        return new Computation(ctx, results, paramSetId, convergenceOk, totalIterations);
+    }
 
-        // 7. Persist forex snapshots — fire-and-forget; don't fail the run if forex fails
-        try {
-            forexService.fetchAndPersist(saved.getId(), request.getPaysId());
-        } catch (Exception ignored) {
-            // forex snapshot failure must never abort a payroll run
-        }
-
-        // 8. Build response (charges déjà injectées à l'étape 4b si besoin).
+    /** Response of a run or a preview (charges déjà injectées à l'étape 4b si besoin). */
+    private RunPayrollResponse toResponse(PayrollResult saved, Computation c) {
+        boolean convergenceOk = c.convergenceOk();
+        int totalIterations = c.totalIterations();
+        List<RubriqueResultItem> results = c.results();
         return RunPayrollResponse.builder()
             .resultId(saved.getId())
             .employeeId(saved.getEmployeeId())
@@ -245,36 +304,55 @@ public class PayrollOrchestrator {
      * première rubrique de strate 1 en mode {@code MONTANT_FIXE} dans l'ordre du bulletin : le
      * code est proposé à partir du libellé (« Salaire de base » → SALAIRE_DE_BASE), il ne doit
      * pas décider du résultat. Sa clé de montant est surchargée dans la copie des paramètres
-     * propre à ce calcul (le jeu de paramètres enregistré n'est pas modifié). Sans
-     * configuration ou sans salaire saisi, le calcul est refusé (« Salaire non renseigné »).
+     * propre à ce calcul (le jeu de paramètres enregistré n'est pas modifié).
+     *
+     * <p>Calcul réel ({@code grossOverride} nul) : le collaborateur DOIT avoir une
+     * configuration enregistrée pour CE pays, avec un salaire brut — sinon le calcul est
+     * refusé. Avant, il retombait en silence sur le montant unique du pays (ex. 2 500 TND
+     * pour tout le monde), un bulletin faux sans aucun signal.
+     *
+     * <p>Situation familiale (IS_MARRIED / CHILDREN_COUNT, déduction IRPP) : lue sur la fiche
+     * RH, source de vérité — la copie de la configuration ne sert que si RH est injoignable.
      */
-    private void applyEmployeeBaseSalary(ExecutionContext ctx, List<PayrollRubriqueDef> rubriques, Long employeeId) {
+    private void applyEmployeeInputs(ExecutionContext ctx, List<PayrollRubriqueDef> rubriques, Long employeeId,
+                                     EmployeePayrollConfig config, BigDecimal grossOverride) {
         if (employeeId == null) return;
-        var config = employeeConfigRepo.findByProfileUserId(employeeId).orElse(null);
 
-        // IS_MARRIED/CHILDREN_COUNT feed Tunisia's ASSIETTE_IRPP family-deduction formula
-        // (strate 4). Seeded as 0/false when the employee has no config row at all, same
-        // "fall back to no adjustment" posture as the base-salary lookup below.
-        boolean isMarried = config != null && Boolean.TRUE.equals(config.getIsMarried());
-        int childrenCount = config != null && config.getChildrenCount() != null ? config.getChildrenCount() : 0;
-        ctx.putVariable("IS_MARRIED", isMarried ? BigDecimal.ONE : BigDecimal.ZERO);
-        ctx.putVariable("CHILDREN_COUNT", BigDecimal.valueOf(childrenCount));
-
-        // Sans salaire brut enregistré, le calcul est REFUSÉ (400) au lieu de retomber sur le
-        // montant unique du jeu de paramètres : un bulletin calculé sur un salaire fictif
-        // passait pour juste. Choix métier du 2026-11-10.
-        BigDecimal gross = config != null ? config.getCurrentGrossSalary() : null;
-        if (gross == null || gross.signum() <= 0) {
-            log.info("applyEmployeeBaseSalary: pas de salaire configuré pour l'employé {} — calcul refusé", employeeId);
-            throw new IllegalArgumentException(
-                "Salaire non renseigné pour ce collaborateur : saisissez son salaire brut dans "
-                + "« Salaires des collaborateurs » avant de lancer le calcul.");
+        EmployeeFamilyResolver.FamilySituation family = familyResolver.resolve(employeeId, config);
+        if (!family.fromHr()) {
+            log.warn("applyEmployeeInputs: situation familiale de l'employé {} non lue sur la fiche RH — valeur en cache utilisée", employeeId);
         }
-        baseSalaryRubrique(rubriques)
-            .ifPresent(r -> {
-                ctx.getParameters().put(r.getParamKeyTaux(), gross);
-                log.debug("applyEmployeeBaseSalary: employé {} — {} = {}", employeeId, r.getParamKeyTaux(), gross);
-            });
+        ctx.putVariable("IS_MARRIED", family.married() ? BigDecimal.ONE : BigDecimal.ZERO);
+        ctx.putVariable("CHILDREN_COUNT", BigDecimal.valueOf(family.childrenCount()));
+
+        BigDecimal gross;
+        if (grossOverride != null) {
+            gross = grossOverride;
+        } else {
+            if (config != null && config.getPaysId() != null && !config.getPaysId().equals(ctx.getPaysId())) {
+                throw new IllegalStateException("La configuration de paie du collaborateur " + employeeId
+                    + " est enregistrée pour un autre pays (paysId=" + config.getPaysId()
+                    + ") : son salaire n'est pas exprimé dans la devise de ce calcul (paysId=" + ctx.getPaysId()
+                    + "). Mettez à jour sa configuration avant de lancer le calcul.");
+            }
+            gross = config != null ? config.getCurrentGrossSalary() : null;
+            // Sans salaire brut enregistré, le calcul est REFUSÉ (400) au lieu de retomber sur le
+            // montant unique du jeu de paramètres. Choix métier du 2026-11-10.
+            if (gross == null || gross.signum() <= 0) {
+                log.info("applyEmployeeInputs: pas de salaire configuré pour l'employé {} — calcul refusé", employeeId);
+                throw new IllegalArgumentException(
+                    "Salaire non renseigné pour ce collaborateur : saisissez son salaire brut dans "
+                    + "« Salaires des collaborateurs » avant de lancer le calcul.");
+            }
+        }
+
+        Optional<PayrollRubriqueDef> base = baseSalaryRubrique(rubriques);
+        if (base.isEmpty()) {
+            throw new IllegalStateException("Aucune rubrique « salaire de base » (strate 1, montant fixe) "
+                + "dans les règles de paie de ce pays : le salaire du collaborateur ne peut pas être appliqué.");
+        }
+        ctx.getParameters().put(base.get().getParamKeyTaux(), gross);
+        log.debug("applyEmployeeInputs: employé {} — {} = {}", employeeId, base.get().getParamKeyTaux(), gross);
     }
 
     /** {@value #BASE_SALARY_RUBRIQUE}, sinon le premier montant fixe de strate 1 ({@code rubriques} est trié par ordre). */

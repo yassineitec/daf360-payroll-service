@@ -16,6 +16,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
@@ -137,16 +138,30 @@ public class GlobalExceptionHandler {
                     .filter(a -> a.startsWith("PAYROLL_"))
                     .sorted()
                     .collect(Collectors.joining(", "));
+            // Total 0 = the token that won carries no `permissions` claim at all: that is the
+            // daf360_access cookie, i.e. the Bearer rhToken was missing or rejected (secret
+            // mismatch). Total > 0 with no PAYROLL_* = the role really lacks the grants.
+            int total = auth.getAuthorities().size();
             log.warn("403 — utilisateur {} authentifié mais sans droit suffisant. "
-                   + "Codes PAYROLL_* portés par le jeton : [{}]. "
-                   + "S'il est vide : accorder les droits (RolePermissions) PUIS se reconnecter, "
+                   + "Codes PAYROLL_* portés par le jeton : [{}] (droits au total : {}). "
+                   + "Total 0 : jeton Bearer absent ou rejeté, vérifier app.jwt-secret. "
+                   + "Sinon : accorder les droits (RolePermissions) PUIS se reconnecter, "
                    + "la revendication est figée à la connexion.",
-                    auth.getName(), held.isEmpty() ? "aucun" : held);
+                    auth.getName(), held.isEmpty() ? "aucun" : held, total);
         }
 
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
         pd.setDetail("Accès refusé. Vous n'avez pas les droits nécessaires pour effectuer cette action.");
         return pd;
+    }
+
+    /** A URL that maps to nothing — typically the browser's own `/favicon.ico` when
+     *  localhost:8893 is opened in a tab. It fell into the catch-all below and was logged
+     *  as a 500 with a full stack trace; it is a plain 404, not a server fault. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ProblemDetail handleNoResource(NoResourceFoundException ex) {
+        log.debug("404 : {}", ex.getMessage());
+        return ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
     }
 
     @ExceptionHandler(Exception.class)

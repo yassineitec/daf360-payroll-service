@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -57,4 +58,9 @@ public class EmployeePayrollConfig {
     /** The gross salary as typed, before conversion — null together with inputCurrency. */
     @Column(name = "input_amount_original")
     private BigDecimal inputAmountOriginal;
+
+    /** Date the current salary applies from (V37) — informational, the engine still uses the
+     *  latest saved configuration. Null on configurations saved before V37. */
+    @Column(name = "effective_date")
+    private LocalDate effectiveDate;
 }

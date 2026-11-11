@@ -45,6 +45,21 @@ public class ResultPersister {
                                   String triggeredBy,
                                   boolean convergenceOk,
                                   Integer iterationsUsed) {
+        return resultRepo.save(build(ctx, items, paramSetId, triggeredBy, convergenceOk, iterationsUsed));
+    }
+
+    /**
+     * Same assembly as {@link #persist}, without the INSERT — used by
+     * {@code PayrollOrchestrator#preview} ("Calculer le net" on the employee's payroll
+     * configuration), so the previewed net is computed by exactly the same aggregation as a
+     * real payslip.
+     */
+    public PayrollResult build(ExecutionContext ctx,
+                               List<RubriqueResultItem> items,
+                               Long paramSetId,
+                               String triggeredBy,
+                               boolean convergenceOk,
+                               Integer iterationsUsed) {
         PayrollResult result = new PayrollResult();
         result.setEmployeeId(ctx.getEmployeeId());
         result.setCountryId(ctx.getCountryId());
@@ -94,7 +109,7 @@ public class ResultPersister {
             result.setRubriqueDetails("[]");
         }
 
-        return resultRepo.save(result);
+        return result;
     }
 
     private BigDecimal sumByNatureAndPayer(List<RubriqueResultItem> items, String nature, String payer) {

@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -48,4 +49,22 @@ public class EmployeePayrollConfigHistory {
 
     @Column(name = "input_amount_original")
     private BigDecimal inputAmountOriginal;
+
+    /** Date this salary applies from (V37). Null on rows saved before V37. */
+    @Column(name = "effective_date")
+    private LocalDate effectiveDate;
+
+    /** Selected benefits WITH their amounts at save time, JSON (V37). Null on older rows. */
+    @Column(name = "benefits_snapshot", columnDefinition = "NVARCHAR(MAX)")
+    private String benefitsSnapshot;
+
+    /** Country director who approved the change (V38); null for a direct save (first salary). */
+    @Column(name = "approved_by")
+    private Long approvedBy;
+
+    @Column(name = "approved_at")
+    private OffsetDateTime approvedAt;
+
+    @Column(name = "salary_change_request_id")
+    private Long salaryChangeRequestId;
 }

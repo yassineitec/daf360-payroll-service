@@ -97,13 +97,44 @@ public class HrEmployeeClient {
         }
     }
 
-    /** Projection of PayrollEmployeeDto from the HR service. */
+    /**
+     * Mirrors the employee's current net salary (employee_payroll_config.current_net_salary,
+     * in the country's working currency) into RH's employee_profiles.salaire_net_rh, which the
+     * salary certificate, the offboarding settlement and Cohort projections read. RH owns no
+     * salary editor any more — this push is the only thing keeping that column current.
+     *
+     * Fails soft (returns false, logs a warning): a configuration save must not be undone
+     * because RH is momentarily unreachable; the next save pushes again.
+     */
+    public boolean pushCurrentNetSalary(Long userId, BigDecimal netSalary) {
+        String url = appProperties.getHrApiBaseUrl()
+                + "/api/hr/internal/payroll-sync/employees/" + userId + "/current-net-salary";
+        try {
+            restClient.put()
+                    .uri(url)
+                    .header("X-Internal-Key", appProperties.getHrInternalApiKey())
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(java.util.Map.of("netSalary", netSalary))
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (Exception ex) {
+            log.warn("RH salary sync failed for userId={} (salaire_net_rh left unchanged): {}", userId, ex.getMessage());
+            return false;
+        }
+    }
+
+    /** Projection of PayrollEmployeeDto from the HR service. {@code married} /
+     *  {@code childrenCount} feed the IRPP family deduction (RH is their source of truth);
+     *  null when an older RH build doesn't send them yet. */
     public record HrEmployeeDto(
             Long       userId,
             Long       paysId,
             String     contractType,
             String     grade,
             String     discipline,
-            BigDecimal salaireNetRh
+            BigDecimal salaireNetRh,
+            Boolean    married,
+            Integer    childrenCount
     ) {}
 }

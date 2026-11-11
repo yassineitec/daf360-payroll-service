@@ -3,6 +3,8 @@ package com.daf360.payroll.modules.payroll.orchestrator;
 import com.daf360.payroll.engine.TopologicalEvaluator;
 import com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfig;
 import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollConfigRepository;
+import com.daf360.payroll.modules.employeeconfig.service.EmployeeFamilyResolver;
+import com.daf360.payroll.modules.simulation.client.HrEmployeeClient;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.payroll.calculator.*;
 import com.daf360.payroll.modules.payroll.dto.RunPayrollRequest;
@@ -49,6 +51,9 @@ class PayrollOrchestratorTunisiaEngineFixTest {
     @Mock private EmployeePayrollConfigRepository employeeConfigRepo;
     @Mock private ParameterSetService parameterSetService;
     @Mock private ForexSnapshotService forexService;
+    // Unstubbed: findEmployeeByUserId returns Optional.empty() (RH unreachable), so the family
+    // situation falls back to the config cache set below (single, 0 children).
+    @Mock private HrEmployeeClient hrEmployeeClient;
 
     private static final String TUNISIA_PARAMETERS = "{"
         + "\"salaire_base_tn\":2500.0,\"taux_cnss_sal_tn\":9.68,\"taux_cnss_empl_tn\":16.57,"
@@ -144,7 +149,8 @@ class PayrollOrchestratorTunisiaEngineFixTest {
             new SystemVariableAggregator(),
             new ResultPersister(resultRepo, new ObjectMapper()),
             forexService,
-            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo);
+            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo,
+            new EmployeeFamilyResolver(hrEmployeeClient));
 
         RunPayrollRequest request = new RunPayrollRequest();
         request.setEmployeeId(1L);
@@ -168,50 +174,6 @@ class PayrollOrchestratorTunisiaEngineFixTest {
         // silently reintroduced (TFP/FOPROLOS dropped again).
         assertThat(response.getAggregateEmployerCharges()).isCloseTo(new BigDecimal("95.03"), within(new BigDecimal("0.01")));
         assertThat(response.getLoadedCost()).isCloseTo(new BigDecimal("557.03"), within(new BigDecimal("0.01")));
-    }
-
-    @Test
-    void noSavedSalary_refusesTheCalculation_insteadOfUsingTheCountryDefault() {
-        PayrollCountry country = new PayrollCountry();
-        country.setId(7L);
-        country.setPaysId(179L);
-        lenient().when(countryRepo.findByPaysIdAndActiveTrue(179L)).thenReturn(Optional.of(country));
-
-        PayrollParamSet paramSet = new PayrollParamSet();
-        paramSet.setId(7L);
-        paramSet.setCountryId(7L);
-        paramSet.setStatus("ACTIVE");
-        paramSet.setVersionNumber(1);
-        paramSet.setEffectiveDate(LocalDate.of(2026, 1, 1));
-        paramSet.setParameters(TUNISIA_PARAMETERS);
-        lenient().when(paramSetRepo.findByCountryIdAndStatus(7L, "ACTIVE")).thenReturn(Optional.of(paramSet));
-        lenient().when(rubriqueRepo.findByCountryIdAndActiveTrue(7L)).thenReturn(tunisiaRubriques());
-
-        // Aucune configuration enregistrée pour ce collaborateur.
-        when(employeeConfigRepo.findByProfileUserId(3L)).thenReturn(Optional.empty());
-
-        PayrollOrchestrator orchestrator = new PayrollOrchestrator(
-            new ContextLoader(countryRepo, paramSetRepo, new ObjectMapper()),
-            new SequenceValidator(),
-            new CalculationDispatcher(List.of(
-                new MontantFixeCalculator(), new TauxPctCalculator(), new BaremeProgressifCalculator(),
-                new AnnualiseBaremeCalculator(), new FormuleCalculator(), new NewtonRaphsonCalculator())),
-            new SystemVariableAggregator(),
-            new ResultPersister(resultRepo, new ObjectMapper()),
-            forexService,
-            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo);
-
-        RunPayrollRequest request = new RunPayrollRequest();
-        request.setEmployeeId(3L);
-        request.setPaysId(179L);
-        request.setPeriodYear(2026);
-        request.setPeriodMonth(1);
-        request.setContractTypeCode("CDI");
-
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> orchestrator.run(request))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("Salaire non renseigné");
-        verify(resultRepo, never()).save(any());
     }
 
     @Test
@@ -265,7 +227,8 @@ class PayrollOrchestratorTunisiaEngineFixTest {
             new SystemVariableAggregator(),
             new ResultPersister(resultRepo, new ObjectMapper()),
             forexService,
-            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo);
+            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo,
+            new EmployeeFamilyResolver(hrEmployeeClient));
 
         RunPayrollRequest request = new RunPayrollRequest();
         request.setEmployeeId(2L);
@@ -279,5 +242,120 @@ class PayrollOrchestratorTunisiaEngineFixTest {
         // Structural check ONLY — Egypt's rates/formula are explicitly unvalidated.
         assertThat(response.getStrate5()).isGreaterThan(BigDecimal.ZERO);
         assertThat(response.getAggregateNet()).isLessThan(response.getAggregateGross());
+    }
+
+    // ── 2026-11-10 Rémunération audit: preview / refusal / family from RH ─────────────────
+
+    private void stubTunisiaEngine() {
+        PayrollCountry country = new PayrollCountry();
+        country.setId(7L);
+        country.setPaysId(179L);
+        when(countryRepo.findByPaysIdAndActiveTrue(179L)).thenReturn(Optional.of(country));
+        PayrollParamSet paramSet = new PayrollParamSet();
+        paramSet.setId(7L);
+        paramSet.setCountryId(7L);
+        paramSet.setStatus("ACTIVE");
+        paramSet.setVersionNumber(1);
+        paramSet.setEffectiveDate(LocalDate.of(2026, 1, 1));
+        paramSet.setParameters(TUNISIA_PARAMETERS);
+        when(paramSetRepo.findByCountryIdAndStatus(7L, "ACTIVE")).thenReturn(Optional.of(paramSet));
+        when(rubriqueRepo.findByCountryIdAndActiveTrue(7L)).thenReturn(tunisiaRubriques());
+    }
+
+    private PayrollOrchestrator newOrchestrator() {
+        return new PayrollOrchestrator(
+            new ContextLoader(countryRepo, paramSetRepo, new ObjectMapper()),
+            new SequenceValidator(),
+            new CalculationDispatcher(List.of(
+                new MontantFixeCalculator(), new TauxPctCalculator(), new BaremeProgressifCalculator(),
+                new AnnualiseBaremeCalculator(), new FormuleCalculator(), new NewtonRaphsonCalculator())),
+            new SystemVariableAggregator(),
+            new ResultPersister(resultRepo, new ObjectMapper()),
+            forexService,
+            rubriqueRepo, countryRepo, new TopologicalEvaluator(null), parameterSetService, employeeConfigRepo,
+            new EmployeeFamilyResolver(hrEmployeeClient));
+    }
+
+    private static RunPayrollRequest tunisiaRequest(long employeeId) {
+        RunPayrollRequest request = new RunPayrollRequest();
+        request.setEmployeeId(employeeId);
+        request.setPaysId(179L);
+        request.setPeriodYear(2026);
+        request.setPeriodMonth(1);
+        request.setContractTypeCode("CDI");
+        return request;
+    }
+
+    @Test
+    void preview_sameNetAsRun_andWritesNothing() {
+        stubTunisiaEngine();
+        when(parameterSetService.loadActiveEntity(179L)).thenThrow(new IllegalStateException("no old-model set"));
+
+        // No saved configuration at all: the preview's gross is the one typed on screen.
+        RunPayrollResponse response = newOrchestrator().preview(tunisiaRequest(3L), new BigDecimal("462"));
+
+        assertThat(response.getAggregateNet()).isCloseTo(new BigDecimal("415.40"), within(new BigDecimal("0.01")));
+        assertThat(response.getResultId()).isNull();
+        verify(resultRepo, never()).save(any());
+        verifyNoInteractions(forexService);
+    }
+
+    @Test
+    void run_withoutSavedGross_isRefused_insteadOfUsingTheCountryDefault() {
+        stubTunisiaEngine();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> newOrchestrator().run(tunisiaRequest(4L)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Salaire non renseigné");
+        verify(resultRepo, never()).save(any());
+    }
+
+    @Test
+    void run_configSavedForAnotherCountry_isRefused() {
+        stubTunisiaEngine();
+        EmployeePayrollConfig config = new EmployeePayrollConfig();
+        config.setPaysId(53L);
+        config.setCurrentGrossSalary(new BigDecimal("15000"));
+        when(employeeConfigRepo.findByProfileUserId(5L)).thenReturn(Optional.of(config));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> newOrchestrator().run(tunisiaRequest(5L)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("autre pays");
+    }
+
+    @Test
+    void familySituation_comesFromRh_notFromTheStaleConfigCopy() {
+        stubTunisiaEngine();
+        when(parameterSetService.loadActiveEntity(179L)).thenThrow(new IllegalStateException("no old-model set"));
+        // The payroll copy says "single" — RH says married with 2 children, then single.
+        EmployeePayrollConfig config = new EmployeePayrollConfig();
+        config.setIsMarried(false);
+        config.setChildrenCount(0);
+        when(employeeConfigRepo.findByProfileUserId(6L)).thenReturn(Optional.of(config));
+        when(hrEmployeeClient.findEmployeeByUserId(6L)).thenReturn(
+            Optional.of(new HrEmployeeClient.HrEmployeeDto(6L, 179L, "CDI", null, null, null, true, 2)),
+            Optional.of(new HrEmployeeClient.HrEmployeeDto(6L, 179L, "CDI", null, null, null, false, 0)));
+
+        PayrollOrchestrator orchestrator = newOrchestrator();
+        BigDecimal marriedNet = orchestrator.preview(tunisiaRequest(6L), new BigDecimal("2000")).getAggregateNet();
+        BigDecimal singleNet  = orchestrator.preview(tunisiaRequest(6L), new BigDecimal("2000")).getAggregateNet();
+
+        // Family deduction lowers the IRPP base → higher net when married with children.
+        assertThat(marriedNet).isGreaterThan(singleNet);
+    }
+
+    @Test
+    void contract_fallsBackToSavedConfig_andLegacyCodesAreNormalised() {
+        stubTunisiaEngine();
+        when(parameterSetService.loadActiveEntity(179L)).thenThrow(new IllegalStateException("no old-model set"));
+        EmployeePayrollConfig config = new EmployeePayrollConfig();
+        config.setContractType("PERMANENT");
+        when(employeeConfigRepo.findByProfileUserId(7L)).thenReturn(Optional.of(config));
+
+        RunPayrollRequest request = tunisiaRequest(7L);
+        request.setContractTypeCode(null);
+        newOrchestrator().preview(request, new BigDecimal("462"));
+
+        assertThat(request.getContractTypeCode()).isEqualTo("CDI");
     }
 }
