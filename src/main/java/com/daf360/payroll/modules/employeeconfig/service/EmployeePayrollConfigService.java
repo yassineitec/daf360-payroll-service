@@ -1,7 +1,10 @@
 package com.daf360.payroll.modules.employeeconfig.service;
 
 import com.daf360.payroll.engine.FxSnapshotService;
+import com.daf360.payroll.engine.PayrollSimulatorService;
+import com.daf360.payroll.modules.employeeconfig.dto.CalculateGrossResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetRequest;
+import com.daf360.payroll.modules.employeeconfig.dto.CalculationFormValues;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigDto;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigHistoryDto;
@@ -12,6 +15,7 @@ import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollConfi
 import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollConfigRepository;
 import com.daf360.payroll.modules.parameterset.entity.BenefitCatalogue;
 import com.daf360.payroll.modules.parameterset.entity.ParameterSet;
+import com.daf360.payroll.modules.parameterset.entity.PayrollRubrique;
 import com.daf360.payroll.modules.parameterset.entity.SocialChargeRate;
 import com.daf360.payroll.modules.parameterset.service.ParameterSetService;
 import com.daf360.payroll.modules.payroll.dto.RunPayrollRequest;
@@ -72,6 +76,8 @@ public class EmployeePayrollConfigService {
     private final ObjectMapper objectMapper;
     private final ParameterSetService paramSetService;
     private final PayrollOrchestrator orchestrator;
+    /** Only for the net → gross inverse (calculate-gross); the net itself is the orchestrator's. */
+    private final PayrollSimulatorService simulatorService;
     private final FxSnapshotService fxService;
     private final FxEntryConversionService fxEntryService;
     private final UsersRefRepository usersRefRepo;
@@ -83,6 +89,7 @@ public class EmployeePayrollConfigService {
                                          ObjectMapper objectMapper,
                                          ParameterSetService paramSetService,
                                          PayrollOrchestrator orchestrator,
+                                         PayrollSimulatorService simulatorService,
                                          FxSnapshotService fxService,
                                          FxEntryConversionService fxEntryService,
                                          UsersRefRepository usersRefRepo) {
@@ -93,6 +100,7 @@ public class EmployeePayrollConfigService {
         this.objectMapper = objectMapper;
         this.paramSetService = paramSetService;
         this.orchestrator = orchestrator;
+        this.simulatorService = simulatorService;
         this.fxService = fxService;
         this.fxEntryService = fxEntryService;
         this.usersRefRepo = usersRefRepo;
@@ -125,11 +133,17 @@ public class EmployeePayrollConfigService {
     /**
      * Net for a given gross, by the real payroll engine, WITHOUT saving anything. Uses the
      * country/contract the screen is currently showing when the caller sends them (they may
-     * not be saved yet), otherwise the saved/default ones.
+     * not be saved yet) — {@code form.paysId/contractType} first, then the top-level
+     * {@code paysId/contractType} — otherwise the saved/default ones.
+     *
+     * <p>Family and benefits from {@code form} are not used here: the engine reads the family
+     * from RH and benefits-in-kind do not enter its net (see class doc).
      */
     public CalculateNetResponse calculateNet(Long profileUserId, CalculateNetRequest req) {
-        Long paysId = req.paysId();
-        String contract = req.contractType();
+        CalculationFormValues form = req.form();
+        Long paysId = form != null && form.paysId() != null ? form.paysId() : req.paysId();
+        String contract = form != null && form.contractType() != null && !form.contractType().isBlank()
+                ? form.contractType() : req.contractType();
         if (paysId == null || contract == null || contract.isBlank()) {
             EmployeePayrollConfigDto cfg = getOrDefault(profileUserId);
             if (paysId == null) paysId = cfg.paysId();
@@ -141,6 +155,88 @@ public class EmployeePayrollConfigService {
         }
         BigDecimal gross = toWorkingCurrency(paysId, req.grossSalary(), req.inputCurrency()).amount();
         return new CalculateNetResponse(previewNet(profileUserId, paysId, contract, gross));
+    }
+
+    public CalculateNetResponse calculateNet(Long profileUserId, BigDecimal grossSalary, String inputCurrency) {
+        return calculateNet(profileUserId, new CalculateNetRequest(grossSalary, inputCurrency));
+    }
+
+    /** {@code form} : valeurs affichées dans le formulaire, prioritaires sur la configuration
+     *  enregistrée — calcul possible avant le premier enregistrement. null → configuration
+     *  enregistrée seule. */
+    public CalculateNetResponse calculateNet(Long profileUserId, BigDecimal grossSalary, String inputCurrency,
+                                             CalculationFormValues form) {
+        return calculateNet(profileUserId, new CalculateNetRequest(grossSalary, inputCurrency, form));
+    }
+
+    public CalculateGrossResponse calculateGross(Long profileUserId, BigDecimal netSalary, String inputCurrency) {
+        return calculateGross(profileUserId, netSalary, inputCurrency, null);
+    }
+
+    /** Calcul inverse de {@link #calculateNet} : net saisi → brut, par le même moteur que le
+     *  simulateur en mode « Net → Brut », avec la même configuration (valeurs du formulaire,
+     *  sinon enregistrées). Le net est saisi dans la devise du champ (comme le brut), et le brut
+     *  rendu dans cette même devise. */
+    public CalculateGrossResponse calculateGross(Long profileUserId, BigDecimal netSalary, String inputCurrency,
+                                                 CalculationFormValues form) {
+        EngineInputs in = engineInputs(profileUserId, "brut", form);
+        PayrollSimulatorService.PayrollResult result = simulatorService.computeFromNet(
+                in.toWorking(netSalary, inputCurrency), in.ps(), in.rates(), in.benefits(), in.rubriques(),
+                in.cfg().contractType(), 22, in.cfg().isMarried(), in.cfg().childrenCount());
+
+        BigDecimal gross = in.isConverted(inputCurrency)
+                ? fxEntryService.convert(result.gross(), in.cfg().workingCurrency(), inputCurrency)
+                : result.gross();
+        return new CalculateGrossResponse(
+                gross.setScale(2, java.math.RoundingMode.HALF_UP), result.netInHand(), result.convergenceOk());
+    }
+
+    /** Ce qu'il faut au moteur pour un collaborateur : sa config (formulaire, sinon enregistrée)
+     *  et le jeu de paramètres actif de son pays (taux, avantages retenus, rubriques). */
+    private record EngineInputs(EmployeePayrollConfigDto cfg, ParameterSet ps, List<SocialChargeRate> rates,
+                                List<BenefitCatalogue> benefits, List<PayrollRubrique> rubriques,
+                                FxEntryConversionService fx) {
+        /** Une devise de saisie absente ou « native » du pays ne déclenche aucune conversion. */
+        boolean isConverted(String inputCurrency) {
+            return inputCurrency != null && !fx.isNativeCurrency(cfg.paysId(), inputCurrency);
+        }
+        /** Montant saisi → devise de travail (déjà résolue par getOrDefault()). */
+        BigDecimal toWorking(BigDecimal amount, String inputCurrency) {
+            return isConverted(inputCurrency) ? fx.convert(amount, inputCurrency, cfg.workingCurrency()) : amount;
+        }
+    }
+
+    private EngineInputs engineInputs(Long profileUserId, String what, CalculationFormValues form) {
+        EmployeePayrollConfigDto cfg = withFormValues(getOrDefault(profileUserId), form);
+        if (cfg.paysId() == null) {
+            throw new IllegalArgumentException(
+                    "Impossible de calculer le " + what + " : aucun pays configuré pour cet employé.");
+        }
+        ParameterSet ps = paramSetService.loadActiveEntity(cfg.paysId());
+        List<BenefitCatalogue> benefits = paramSetService.loadBenefits(ps.getId()).stream()
+                .filter(b -> cfg.selectedBenefitCodes().contains(b.getBenefitCode()))
+                .toList();
+        return new EngineInputs(cfg, ps, paramSetService.loadRates(ps.getId()), benefits,
+                paramSetService.loadRubriques(ps.getId()), fxEntryService);
+    }
+
+    /** Config enregistrée (ou par défaut) + valeurs du formulaire : chaque valeur non nulle
+     *  remplace l'enregistrée. Un pays différent re-résout la devise de travail. */
+    private EmployeePayrollConfigDto withFormValues(EmployeePayrollConfigDto saved, CalculationFormValues form) {
+        if (form == null) return saved;
+        Long paysId = form.paysId() != null ? form.paysId() : saved.paysId();
+        String workingCurrency = java.util.Objects.equals(paysId, saved.paysId()) ? saved.workingCurrency()
+                : paysId == null ? null : fxService.resolve(paysId).currency();
+        String contractType = form.contractType() != null && !form.contractType().isBlank()
+                ? form.contractType() : saved.contractType();
+        return new EmployeePayrollConfigDto(
+                saved.profileUserId(), paysId, contractType,
+                form.selectedBenefitCodes() != null ? form.selectedBenefitCodes() : saved.selectedBenefitCodes(),
+                saved.currentGrossSalary(), saved.currentNetSalary(),
+                form.isMarried() != null ? form.isMarried() : saved.isMarried(),
+                form.childrenCount() != null ? form.childrenCount() : saved.childrenCount(),
+                saved.updatedBy(), saved.updatedAt(), saved.inputCurrency(), saved.inputAmountOriginal(),
+                workingCurrency, saved.familyFromHr(), saved.effectiveDate());
     }
 
     /** Contrat de la configuration paie ENREGISTRÉE, par collaborateur — pour la liste

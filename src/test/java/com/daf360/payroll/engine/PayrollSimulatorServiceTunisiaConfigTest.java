@@ -6,11 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Regression test for the Tunisia payroll configuration audit
@@ -95,6 +98,29 @@ class PayrollSimulatorServiceTunisiaConfigTest {
         assertThat(result.taxableBase()).isEqualByComparingTo("2709.6000");
         assertThat(result.irppAmount()).isEqualByComparingTo("521.2733");
         assertThat(result.netInHand()).isEqualByComparingTo("2175.8200");
+    }
+
+    @Test
+    @DisplayName("Net → brut : le net de la feuille de référence (2161.8617) redonne le brut 3000")
+    void netToGross_referenceWorksheet() {
+        PayrollSimulatorService.PayrollResult result = simulator.computeFromNet(
+                new BigDecimal("2161.8617"), ps, tunisiaRates(), List.of(), List.of(), "CDI", 22, false, 0);
+
+        assertThat(result.convergenceOk()).isTrue();
+        assertThat(result.gross()).isCloseTo(new BigDecimal("3000"), within(new BigDecimal("0.05")));
+    }
+
+    @ParameterizedTest(name = "net {0}, marié={1}, enfants={2}")
+    @CsvSource({ "1580,false,0", "1580,true,2", "4200,true,3", "900,false,0" })
+    @DisplayName("Aller-retour net → brut → net : le brut trouvé redonne le net saisi (± 0.05)")
+    void netToGross_roundTrip(String net, boolean married, int children) {
+        PayrollSimulatorService.PayrollResult fromNet = simulator.computeFromNet(
+                new BigDecimal(net), ps, tunisiaRates(), List.of(), List.of(), "CDI", 22, married, children);
+        PayrollSimulatorService.PayrollResult back = simulator.computeFromGross(
+                fromNet.gross(), ps, tunisiaRates(), List.of(), List.of(), "CDI", 22, married, children);
+
+        assertThat(fromNet.convergenceOk()).isTrue();
+        assertThat(back.netInHand()).isCloseTo(new BigDecimal(net), within(new BigDecimal("0.05")));
     }
 
     @Test

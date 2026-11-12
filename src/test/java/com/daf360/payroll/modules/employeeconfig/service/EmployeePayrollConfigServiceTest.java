@@ -1,6 +1,8 @@
 package com.daf360.payroll.modules.employeeconfig.service;
 
 import com.daf360.payroll.engine.FxSnapshotService;
+import com.daf360.payroll.engine.PayrollSimulatorService;
+import com.daf360.payroll.modules.parameterset.entity.BenefitCatalogue;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetRequest;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigDto;
@@ -38,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -54,6 +58,7 @@ class EmployeePayrollConfigServiceTest {
     @Mock HrEmployeeClient hrEmployeeClient;
     @Mock ParameterSetService paramSetService;
     @Mock PayrollOrchestrator orchestrator;
+    @Mock PayrollSimulatorService simulatorService;
     @Mock FxSnapshotService fxService;
     @Mock FxEntryConversionService fxEntryService;
     @Mock UsersRefRepository usersRefRepo;
@@ -64,7 +69,7 @@ class EmployeePayrollConfigServiceTest {
     private EmployeePayrollConfigService service() {
         return new EmployeePayrollConfigService(
                 repo, historyRepo, hrEmployeeClient, new EmployeeFamilyResolver(hrEmployeeClient),
-                new ObjectMapper().findAndRegisterModules(), paramSetService, orchestrator, fxService, fxEntryService,
+                new ObjectMapper().findAndRegisterModules(), paramSetService, orchestrator, simulatorService, fxService, fxEntryService,
                 usersRefRepo);
     }
 
@@ -290,6 +295,54 @@ class EmployeePayrollConfigServiceTest {
         assertEquals(10L, run.getValue().getEmployeeId());
         // Country and contract came with the request: no lookup of the saved config needed.
         verifyNoInteractions(repo);
+    }
+
+    /** Jamais enregistré, pas de pays RH : les valeurs du formulaire suffisent au calcul
+     *  (net → brut), et ce sont elles qui partent au moteur. */
+    @Test
+    void calculateGross_neverSaved_usesFormValues() {
+        when(repo.findByProfileUserId(10L)).thenReturn(Optional.empty());
+        when(hrEmployeeClient.findEmployeeByUserId(10L)).thenReturn(Optional.empty());
+        when(fxService.resolve(179L)).thenReturn(new com.daf360.payroll.engine.FxSnapshotService.FxSnapshot("TND", BigDecimal.ONE, new BigDecimal("0.3"), new BigDecimal("0.28")));
+
+        ParameterSet ps = new ParameterSet();
+        ps.setId(55L);
+        when(paramSetService.loadActiveEntity(179L)).thenReturn(ps);
+        when(paramSetService.loadRates(55L)).thenReturn(List.of());
+        when(paramSetService.loadRubriques(55L)).thenReturn(List.of());
+        BenefitCatalogue meal = new BenefitCatalogue();
+        meal.setBenefitCode("MEAL");
+        BenefitCatalogue transport = new BenefitCatalogue();
+        transport.setBenefitCode("TRANSPORT");
+        when(paramSetService.loadBenefits(55L)).thenReturn(List.of(meal, transport));
+
+        when(simulatorService.computeFromNet(
+                any(BigDecimal.class), any(ParameterSet.class), anyList(), anyList(), anyList(),
+                any(String.class), anyInt(), any(), any()))
+                .thenReturn(new PayrollSimulatorService.PayrollResult(
+                        new BigDecimal("1580.000"), null, null, new BigDecimal("2104.567"), null, null, null, null,
+                        null, null, null, 7, true, List.of()));
+
+        com.daf360.payroll.modules.employeeconfig.dto.CalculateGrossResponse response = service().calculateGross(
+                10L, new BigDecimal("1580"), null,
+                new com.daf360.payroll.modules.employeeconfig.dto.CalculationFormValues(
+                        179L, "CDD", List.of("MEAL"), true, 2));
+
+        assertEquals(new BigDecimal("2104.57"), response.grossSalary());
+        assertEquals(new BigDecimal("1580.000"), response.netInHand());
+
+        ArgumentCaptor<String> contract = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Boolean> married = ArgumentCaptor.forClass(Boolean.class);
+        ArgumentCaptor<Integer> children = ArgumentCaptor.forClass(Integer.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<BenefitCatalogue>> benefits = ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(simulatorService).computeFromNet(
+                eq(new BigDecimal("1580")), eq(ps), anyList(), benefits.capture(), anyList(),
+                contract.capture(), eq(22), married.capture(), children.capture());
+        assertEquals("CDD", contract.getValue());
+        assertEquals(true, married.getValue());
+        assertEquals(2, children.getValue());
+        assertEquals(List.of("MEAL"), benefits.getValue().stream().map(BenefitCatalogue::getBenefitCode).toList());
     }
 
     @Test
