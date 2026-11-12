@@ -211,6 +211,8 @@ public class IndividualSimulationService {
                         PayrollRubrique r = er.rubrique();
                         java.util.HashMap<String, Object> m = new java.util.HashMap<>();
                         m.put("code",      r.getCode());
+                        m.put("labelFr",   r.getLabelFr());
+                        m.put("labelEn",   r.getLabelEn());
                         m.put("nature",    r.getNature());
                         m.put("calcMode",  r.getCalcMode());
                         m.put("direction", r.getDirection());
