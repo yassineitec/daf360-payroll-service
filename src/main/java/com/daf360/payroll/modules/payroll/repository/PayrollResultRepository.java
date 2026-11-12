@@ -18,6 +18,10 @@ public interface PayrollResultRepository extends JpaRepository<PayrollResult, Lo
 
     List<PayrollResult> findByEmployeeIdOrderByPeriodYearDescPeriodMonthDesc(Long employeeId);
 
+    /** Résultats de plusieurs collaborateurs (export de la liste) — appeler par lots ≤ 1000 ids :
+     *  SQL Server plafonne une requête à 2100 paramètres. */
+    List<PayrollResult> findByEmployeeIdIn(java.util.Collection<Long> employeeIds);
+
     Optional<PayrollResult> findByEmployeeIdAndPeriodYearAndPeriodMonth(Long employeeId, int year, int month);
 
     List<PayrollResult> findByCountryIdAndPeriodYearAndPeriodMonth(Long countryId, int periodYear, int periodMonth);
