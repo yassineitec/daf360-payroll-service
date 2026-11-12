@@ -59,7 +59,7 @@ public class EmployeePayrollConfigController {
     @PreAuthorize("hasAuthority('" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
     public CalculateNetResponse calculateNet(@PathVariable Long profileUserId,
                                               @Valid @RequestBody CalculateNetRequest req) {
-        return service.calculateNet(profileUserId, req.grossSalary(), req.inputCurrency());
+        return service.calculateNet(profileUserId, req.grossSalary(), req.inputCurrency(), req.form());
     }
 
     /** Calcul inverse : net saisi → brut (champ « Salaire net » de la configuration de paie). */
@@ -67,6 +67,6 @@ public class EmployeePayrollConfigController {
     @PreAuthorize("hasAuthority('" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
     public CalculateGrossResponse calculateGross(@PathVariable Long profileUserId,
                                                   @Valid @RequestBody CalculateGrossRequest req) {
-        return service.calculateGross(profileUserId, req.netSalary(), req.inputCurrency());
+        return service.calculateGross(profileUserId, req.netSalary(), req.inputCurrency(), req.form());
     }
 }

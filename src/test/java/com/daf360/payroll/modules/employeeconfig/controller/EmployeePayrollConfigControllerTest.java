@@ -22,7 +22,7 @@ class EmployeePayrollConfigControllerTest {
 
     @Test
     void calculateNet_delegatesToServiceAndReturnsNetInHand() {
-        when(service.calculateNet(10L, new BigDecimal("5000.000"), null))
+        when(service.calculateNet(10L, new BigDecimal("5000.000"), null, null))
                 .thenReturn(new CalculateNetResponse(new BigDecimal("3820.500")));
 
         EmployeePayrollConfigController controller = new EmployeePayrollConfigController(service, userContext);
