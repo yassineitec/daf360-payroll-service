@@ -1,6 +1,7 @@
 package com.daf360.payroll.modules.employeeconfig.service;
 
 import com.daf360.payroll.engine.PayrollSimulatorService;
+import com.daf360.payroll.modules.employeeconfig.dto.CalculateGrossResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigDto;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigHistoryDto;
@@ -93,32 +94,59 @@ public class EmployeePayrollConfigService {
      * docs/superpowers/specs/2026-09-23-employee-config-enhancements-design.md.
      */
     public CalculateNetResponse calculateNet(Long profileUserId, BigDecimal grossSalary, String inputCurrency) {
-        EmployeePayrollConfigDto cfg = getOrDefault(profileUserId);
-        if (cfg.paysId() == null) {
-            throw new IllegalArgumentException(
-                    "Impossible de calculer le net : aucun pays configuré pour cet employé.");
-        }
-        ParameterSet ps = paramSetService.loadActiveEntity(cfg.paysId());
-        List<SocialChargeRate> rates = paramSetService.loadRates(ps.getId());
-        List<BenefitCatalogue> allBenefits = paramSetService.loadBenefits(ps.getId());
-        List<PayrollRubrique> rubriques = paramSetService.loadRubriques(ps.getId());
-        List<BenefitCatalogue> benefits = allBenefits.stream()
-                .filter(b -> cfg.selectedBenefitCodes().contains(b.getBenefitCode()))
-                .toList();
-
-        // workingCurrency comes straight off cfg — getOrDefault() already resolved it via
-        // fxService, no need to call it a second time here.
-        BigDecimal convertedGross = (inputCurrency == null || fxEntryService.isNativeCurrency(cfg.paysId(), inputCurrency))
-                ? grossSalary
-                : fxEntryService.convert(grossSalary, inputCurrency, cfg.workingCurrency());
-
+        EngineInputs in = engineInputs(profileUserId, "net");
         // 22 mirrors IndividualSimulationService's own joursTravailes default; this screen
         // doesn't expose an override.
         PayrollSimulatorService.PayrollResult result = simulatorService.computeFromGross(
-                convertedGross, ps, rates, benefits, rubriques, cfg.contractType(), 22,
-                cfg.isMarried(), cfg.childrenCount());
+                in.toWorking(grossSalary, inputCurrency), in.ps(), in.rates(), in.benefits(), in.rubriques(),
+                in.cfg().contractType(), 22, in.cfg().isMarried(), in.cfg().childrenCount());
 
         return new CalculateNetResponse(result.netInHand());
+    }
+
+    /** Calcul inverse de {@link #calculateNet} : net saisi → brut, par le même moteur et la même
+     *  configuration ENREGISTRÉE que le simulateur en mode « Net → Brut ». Le net est saisi dans
+     *  la devise du champ (comme le brut), et le brut rendu dans cette même devise. */
+    public CalculateGrossResponse calculateGross(Long profileUserId, BigDecimal netSalary, String inputCurrency) {
+        EngineInputs in = engineInputs(profileUserId, "brut");
+        PayrollSimulatorService.PayrollResult result = simulatorService.computeFromNet(
+                in.toWorking(netSalary, inputCurrency), in.ps(), in.rates(), in.benefits(), in.rubriques(),
+                in.cfg().contractType(), 22, in.cfg().isMarried(), in.cfg().childrenCount());
+
+        BigDecimal gross = in.isConverted(inputCurrency)
+                ? fxEntryService.convert(result.gross(), in.cfg().workingCurrency(), inputCurrency)
+                : result.gross();
+        return new CalculateGrossResponse(
+                gross.setScale(2, java.math.RoundingMode.HALF_UP), result.netInHand(), result.convergenceOk());
+    }
+
+    /** Ce qu'il faut au moteur pour un collaborateur : sa config enregistrée et le jeu de
+     *  paramètres actif de son pays (taux, avantages retenus, rubriques). */
+    private record EngineInputs(EmployeePayrollConfigDto cfg, ParameterSet ps, List<SocialChargeRate> rates,
+                                List<BenefitCatalogue> benefits, List<PayrollRubrique> rubriques,
+                                com.daf360.payroll.modules.ref.service.FxEntryConversionService fx) {
+        /** Une devise de saisie absente ou « native » du pays ne déclenche aucune conversion. */
+        boolean isConverted(String inputCurrency) {
+            return inputCurrency != null && !fx.isNativeCurrency(cfg.paysId(), inputCurrency);
+        }
+        /** Montant saisi → devise de travail (déjà résolue par getOrDefault()). */
+        BigDecimal toWorking(BigDecimal amount, String inputCurrency) {
+            return isConverted(inputCurrency) ? fx.convert(amount, inputCurrency, cfg.workingCurrency()) : amount;
+        }
+    }
+
+    private EngineInputs engineInputs(Long profileUserId, String what) {
+        EmployeePayrollConfigDto cfg = getOrDefault(profileUserId);
+        if (cfg.paysId() == null) {
+            throw new IllegalArgumentException(
+                    "Impossible de calculer le " + what + " : aucun pays configuré pour cet employé.");
+        }
+        ParameterSet ps = paramSetService.loadActiveEntity(cfg.paysId());
+        List<BenefitCatalogue> benefits = paramSetService.loadBenefits(ps.getId()).stream()
+                .filter(b -> cfg.selectedBenefitCodes().contains(b.getBenefitCode()))
+                .toList();
+        return new EngineInputs(cfg, ps, paramSetService.loadRates(ps.getId()), benefits,
+                paramSetService.loadRubriques(ps.getId()), fxEntryService);
     }
 
     /** Contrat de la configuration paie ENREGISTRÉE, par collaborateur — pour la liste

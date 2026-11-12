@@ -1,5 +1,7 @@
 package com.daf360.payroll.modules.employeeconfig.controller;
 
+import com.daf360.payroll.modules.employeeconfig.dto.CalculateGrossRequest;
+import com.daf360.payroll.modules.employeeconfig.dto.CalculateGrossResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetRequest;
 import com.daf360.payroll.modules.employeeconfig.dto.CalculateNetResponse;
 import com.daf360.payroll.modules.employeeconfig.dto.EmployeePayrollConfigDto;
@@ -58,5 +60,13 @@ public class EmployeePayrollConfigController {
     public CalculateNetResponse calculateNet(@PathVariable Long profileUserId,
                                               @Valid @RequestBody CalculateNetRequest req) {
         return service.calculateNet(profileUserId, req.grossSalary(), req.inputCurrency());
+    }
+
+    /** Calcul inverse : net saisi → brut (champ « Salaire net » de la configuration de paie). */
+    @PostMapping("/{profileUserId}/calculate-gross")
+    @PreAuthorize("hasAuthority('" + PermissionCatalog.MANAGE_EMPLOYEE_CONFIG + "')")
+    public CalculateGrossResponse calculateGross(@PathVariable Long profileUserId,
+                                                  @Valid @RequestBody CalculateGrossRequest req) {
+        return service.calculateGross(profileUserId, req.netSalary(), req.inputCurrency());
     }
 }
