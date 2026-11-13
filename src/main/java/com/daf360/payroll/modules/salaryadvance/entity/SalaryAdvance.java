@@ -35,14 +35,31 @@ public class SalaryAdvance {
     @Column(name = "currency", nullable = false)
     private String currency;
 
+    /** The asked amount until approval, the GRANTED amount from then on (V39). */
     @Column(name = "amount", nullable = false)
     private BigDecimal amount;
 
+    /** The asked period until approval, the GRANTED period from then on (V39). */
     @Column(name = "installments", nullable = false)
     private Integer installments;
 
-    /** First day of the payroll month of the first deduction. */
-    @Column(name = "first_deduction_month", nullable = false)
+    /** What the employee asked — never changed after submission (V39). */
+    @Column(name = "requested_amount")
+    private BigDecimal requestedAmount;
+
+    @Column(name = "requested_installments")
+    private Integer requestedInstallments;
+
+    /** « Date souhaitée de mise à disposition » (V39). */
+    @Column(name = "requested_availability_date")
+    private LocalDate requestedAvailabilityDate;
+
+    /** « Date d'effet »: when the money is made available — set by the DAF (V39). */
+    @Column(name = "effective_date")
+    private LocalDate effectiveDate;
+
+    /** First day of the payroll month of the first deduction. Set by the DAF; NULL before (V39). */
+    @Column(name = "first_deduction_month")
     private LocalDate firstDeductionMonth;
 
     @Column(name = "reason")
@@ -51,6 +68,36 @@ public class SalaryAdvance {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private SalaryAdvanceStatus status = SalaryAdvanceStatus.PENDING_FINANCE;
+
+    @Column(name = "director_decided_by")
+    private Long directorDecidedBy;
+
+    @Column(name = "director_decided_at")
+    private OffsetDateTime directorDecidedAt;
+
+    @Column(name = "director_notes")
+    private String directorNotes;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "contract_status")
+    private ContractStatus contractStatus;
+
+    /** RH employee_documents id of the generated (unsigned) contract. */
+    @Column(name = "contract_document_id")
+    private Long contractDocumentId;
+
+    @Column(name = "contract_generated_at")
+    private OffsetDateTime contractGeneratedAt;
+
+    /** RH employee_documents id of the signed, legalised scan. */
+    @Column(name = "signed_contract_document_id")
+    private Long signedContractDocumentId;
+
+    @Column(name = "signed_contract_uploaded_by")
+    private Long signedContractUploadedBy;
+
+    @Column(name = "signed_contract_uploaded_at")
+    private OffsetDateTime signedContractUploadedAt;
 
     @Column(name = "finance_decided_by")
     private Long financeDecidedBy;

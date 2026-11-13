@@ -37,6 +37,10 @@ public final class PermissionCatalog {
      * finance is the approval hub, payroll owns the data, so payroll-service checks it.
      */
     public static final String FACT_APPROVE_SALARY_ADVANCE = "FACT_APPROVE_SALARY_ADVANCE";
+    /** Validates a salary advance ABOVE the country threshold, before the DAF (V128). FACT_ code. */
+    public static final String FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD = "FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD";
+    /** Reads the « Avances sur salaire » page and downloads the contracts (V128). FACT_ code. */
+    public static final String FACT_VIEW_SALARY_ADVANCES   = "FACT_VIEW_SALARY_ADVANCES";
 
     /** All codes — used to validate PermissionCatalog entries in RH service. */
     public static final Set<String> ALL_CODES = Set.of(

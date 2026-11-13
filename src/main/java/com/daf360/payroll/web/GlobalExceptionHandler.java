@@ -16,6 +16,9 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.NoSuchElementException;
@@ -162,6 +165,23 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleNoResource(NoResourceFoundException ex) {
         log.debug("404 : {}", ex.getMessage());
         return ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+    }
+
+    /** An upload over spring.servlet.multipart.max-file-size (10 MB) — a user error, not a 500. */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ProblemDetail handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYLOAD_TOO_LARGE);
+        pd.setDetail("Fichier trop volumineux (10 Mo maximum).");
+        return pd;
+    }
+
+    /** A multipart body the server could not read (no file part, broken upload). */
+    @ExceptionHandler({ MultipartException.class, MissingServletRequestPartException.class })
+    public ProblemDetail handleBadUpload(Exception ex) {
+        log.warn("Upload refusé : {}", ex.toString());
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setDetail("Le fichier n'a pas pu être lu. Choisissez-le à nouveau puis réessayez.");
+        return pd;
     }
 
     @ExceptionHandler(Exception.class)

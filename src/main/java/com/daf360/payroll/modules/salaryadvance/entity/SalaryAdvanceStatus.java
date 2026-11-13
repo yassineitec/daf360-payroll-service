@@ -3,20 +3,24 @@ package com.daf360.payroll.modules.salaryadvance.entity;
 import java.util.Set;
 
 /**
- * Life of a salary advance (V25, {@code CK_sa_status}).
+ * Life of a salary advance (V25, {@code CK_sa_status}; PENDING_DIRECTOR since V39).
  *
  * <pre>
- * PENDING_FINANCE ─► APPROVED ─► REPAYING ─► REPAID
- *        │
- *        ├─► REJECTED   (finance declines)
- *        └─► CANCELLED  (the employee withdraws)
+ * PENDING_DIRECTOR ─► PENDING_FINANCE ─► APPROVED ─► REPAYING ─► REPAID
+ *   (above the           │                (terms set,   (payout
+ *    country threshold)  │                 schedule,     confirmed)
+ *        │               │                 contract)
+ *        ├─► REJECTED ◄──┤
+ *        └─► CANCELLED ◄─┘  (the employee withdraws before any decision)
  * </pre>
  */
 public enum SalaryAdvanceStatus {
-    /** Asked by the employee, waiting for finance. */
+    /** Above the country threshold: waiting for a holder of the threshold code. */
+    PENDING_DIRECTOR,
+    /** « En attente de traitement »: waiting for the DAF. */
     PENDING_FINANCE,
     REJECTED,
-    /** Finance said yes; payroll has not paid it out yet. */
+    /** Granted with its final terms; schedule built, contract generated; not paid out yet. */
     APPROVED,
     /** Paid out; the schedule is running. */
     REPAYING,
@@ -27,5 +31,8 @@ public enum SalaryAdvanceStatus {
      * Statuses that block a second request: anything still moving, or money still owed. One
      * advance at a time keeps the monthly deduction to a single line per employee.
      */
-    public static final Set<SalaryAdvanceStatus> OPEN = Set.of(PENDING_FINANCE, APPROVED, REPAYING);
+    public static final Set<SalaryAdvanceStatus> OPEN = Set.of(PENDING_DIRECTOR, PENDING_FINANCE, APPROVED, REPAYING);
+
+    /** Not decided yet — the employee may still withdraw. */
+    public static final Set<SalaryAdvanceStatus> UNDECIDED = Set.of(PENDING_DIRECTOR, PENDING_FINANCE);
 }

@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 /**
@@ -37,6 +38,17 @@ public class SalaryAdvancePolicy {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
+
+    /**
+     * Above this amount (in {@link #currency}), a holder of the threshold code validates the
+     * request before the DAF (V39). NULL = no director step.
+     */
+    @Column(name = "director_threshold")
+    private BigDecimal directorThreshold;
+
+    /** Payroll cannot confirm the payout before the signed contract is archived (V39). */
+    @Column(name = "require_signed_contract", nullable = false)
+    private Boolean requireSignedContract = true;
 
     @Column(name = "updated_by")
     private Long updatedBy;

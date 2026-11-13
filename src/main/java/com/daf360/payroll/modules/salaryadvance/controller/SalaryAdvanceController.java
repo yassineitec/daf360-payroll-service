@@ -6,6 +6,8 @@ import com.daf360.payroll.modules.salaryadvance.entity.InstallmentStatus;
 import com.daf360.payroll.modules.salaryadvance.entity.SalaryAdvanceStatus;
 import com.daf360.payroll.modules.salaryadvance.service.SalaryAdvanceService;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -13,7 +15,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
@@ -23,21 +27,27 @@ import java.util.Map;
 /**
  * Salary advances — payroll owns them, because they exist to be deducted from the next salaries.
  *
- * Three audiences, one controller because they act on one row:
+ * Every desk is a PERMISSION, never a role: any role holding the code can act.
  *  - the employee, from self-service — the {@code /my*} endpoints carry NO permission: everyone
  *    files and reads their own, and the service checks the row belongs to the caller;
- *  - finance, the decision hub — {@code FACT_APPROVE_SALARY_ADVANCE} (a FACT_ code, declared in
- *    FactPermissionCatalog; the finance frontend calls this service on its payroll API URL);
- *  - payroll — {@code PAYROLL_MANAGE_SALARY_ADVANCES}: payout, monthly deductions, follow-up, rules.
+ *  - above the country threshold — {@code FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD};
+ *  - the DAF — {@code FACT_APPROVE_SALARY_ADVANCE}: final terms, decision, signed contract;
+ *  - read-only — {@code FACT_VIEW_SALARY_ADVANCES}: the « Avances sur salaire » page, contracts;
+ *  - payroll — {@code PAYROLL_MANAGE_SALARY_ADVANCES}: payout, monthly deductions, rules.
+ * FACT_ codes are declared in FactPermissionCatalog; the finance frontend calls this service
+ * on its payroll API URL.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/payroll/salary-advances")
 public class SalaryAdvanceController {
 
-    private static final String FINANCE = "hasAuthority('FACT_APPROVE_SALARY_ADVANCE')";
-    private static final String PAYROLL = "hasAuthority('PAYROLL_MANAGE_SALARY_ADVANCES')";
-    /** The detail is read by both desks. */
-    private static final String EITHER  = "hasAnyAuthority('FACT_APPROVE_SALARY_ADVANCE','PAYROLL_MANAGE_SALARY_ADVANCES')";
+    private static final String DIRECTOR = "hasAuthority('FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD')";
+    private static final String FINANCE  = "hasAuthority('FACT_APPROVE_SALARY_ADVANCE')";
+    private static final String PAYROLL  = "hasAuthority('PAYROLL_MANAGE_SALARY_ADVANCES')";
+    /** Everyone who reads advances: the page, the detail, the contracts. */
+    private static final String READ     = "hasAnyAuthority('FACT_VIEW_SALARY_ADVANCES','FACT_APPROVE_SALARY_ADVANCE',"
+            + "'FACT_VALIDATE_SALARY_ADVANCE_ABOVE_THRESHOLD','PAYROLL_MANAGE_SALARY_ADVANCES')";
 
     private final SalaryAdvanceService service;
     private final UserContextService   userContext;
@@ -76,7 +86,27 @@ public class SalaryAdvanceController {
         return service.cancelMine(id, request.notes(), caller());
     }
 
-    // ── Finance — approve / decline ─────────────────────────────────────────
+    // ── Director — above the country threshold ──────────────────────────────
+
+    @GetMapping("/pending-director")
+    @PreAuthorize(DIRECTOR)
+    public List<AdvanceDto> pendingDirector() {
+        return service.listPendingDirector();
+    }
+
+    @PostMapping("/{id}/director-approve")
+    @PreAuthorize(DIRECTOR)
+    public AdvanceDto directorApprove(@PathVariable Long id, @Valid @RequestBody DecisionRequest request) {
+        return service.directorApprove(id, request.notes(), caller());
+    }
+
+    @PostMapping("/{id}/director-reject")
+    @PreAuthorize(DIRECTOR)
+    public AdvanceDto directorReject(@PathVariable Long id, @Valid @RequestBody DecisionRequest request) {
+        return service.directorReject(id, request.notes(), caller());
+    }
+
+    // ── DAF — final terms, decision, contract ───────────────────────────────
 
     @GetMapping("/pending-finance")
     @PreAuthorize(FINANCE)
@@ -84,10 +114,26 @@ public class SalaryAdvanceController {
         return service.listPendingFinance();
     }
 
+    /**
+     * Grants the advance with its final terms, then has RH generate the debt contract. The
+     * two run in separate transactions on purpose: the approval stands even when RH is down —
+     * the answer then shows no contract, and {@code POST /{id}/contract/generate} retries.
+     */
     @PostMapping("/{id}/approve")
     @PreAuthorize(FINANCE)
-    public AdvanceDto approve(@PathVariable Long id, @Valid @RequestBody DecisionRequest request) {
-        return service.approve(id, request.notes(), caller());
+    public AdvanceDto approve(@PathVariable Long id, @Valid @RequestBody ApproveRequest request) {
+        Long caller = caller();
+        AdvanceDto approved = service.approve(id, request, caller);
+        // The grant is committed at this point. Whatever goes wrong with the contract, the
+        // answer must be the approval: an error here made the DAF click again and get
+        // « n'attend pas de décision du DAF (statut = APPROVED) » (TC-12). The page then
+        // shows « Contrat non généré » and offers « Générer le contrat ».
+        try {
+            return service.generateContract(id, caller);
+        } catch (RuntimeException ex) {
+            log.warn("Advance {} approved, contract not generated: {}", id, ex.toString(), ex);
+            return approved;
+        }
     }
 
     @PostMapping("/{id}/reject")
@@ -96,14 +142,42 @@ public class SalaryAdvanceController {
         return service.reject(id, request.notes(), caller());
     }
 
-    // ── Payroll — payout, deductions, follow-up, rules ──────────────────────
+    /** (Re)generates the contract — after an RH outage at approval, or a template fix. */
+    @PostMapping("/{id}/contract/generate")
+    @PreAuthorize(FINANCE)
+    public AdvanceDto generateContract(@PathVariable Long id) {
+        return service.generateContract(id, caller());
+    }
 
-    /** The follow-up list. {@code status} may be repeated; absent = every status. */
+    /** The signed, legalised scan (PDF / JPG / PNG, 10 MB). RH archives it in the employee's folder. */
+    @PostMapping(value = "/{id}/contract/signed", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize(FINANCE)
+    public AdvanceDto uploadSignedContract(@PathVariable Long id, @RequestParam("file") MultipartFile file) throws IOException {
+        return service.uploadSignedContract(id, file.getBytes(), file.getOriginalFilename(), file.getContentType(), caller());
+    }
+
+    /** The generated contract, or the signed scan with {@code signed=true}. */
+    @GetMapping("/{id}/contract")
+    @PreAuthorize(READ)
+    public ResponseEntity<byte[]> contract(@PathVariable Long id, @RequestParam(defaultValue = "false") boolean signed) {
+        ContractFile file = service.contract(id, signed);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                        .filename(file.fileName(), StandardCharsets.UTF_8).build().toString())
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .body(file.content());
+    }
+
+    // ── Read — the « Avances sur salaire » page, payroll's follow-up ────────
+
+    /** Every advance in scope. {@code status} may be repeated; absent = every status. */
     @GetMapping
-    @PreAuthorize(PAYROLL)
+    @PreAuthorize(READ)
     public List<AdvanceDto> list(@RequestParam(required = false) List<SalaryAdvanceStatus> status) {
         return service.listAll(status);
     }
+
+    // ── Payroll — payout, deductions, rules ─────────────────────────────────
 
     @GetMapping("/to-disburse")
     @PreAuthorize(PAYROLL)
@@ -192,7 +266,7 @@ public class SalaryAdvanceController {
     // ── Shared ──────────────────────────────────────────────────────────────
 
     @GetMapping("/{id}")
-    @PreAuthorize(EITHER)
+    @PreAuthorize(READ)
     public AdvanceDto detail(@PathVariable Long id) {
         return service.getById(id);
     }

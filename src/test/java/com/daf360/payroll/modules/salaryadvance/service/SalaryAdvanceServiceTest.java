@@ -29,11 +29,15 @@ import static org.mockito.Mockito.*;
  *  2. Schedule — consecutive months across a year boundary
  *  3. Eligibility — no RH profile → NO_PROFILE
  *  4. Eligibility — all blockers listed at once (seniority, open advance, departure)
- *  5. Submit — goes to PENDING_FINANCE; no ceiling on the amount
+ *  5. Submit — goes to PENDING_FINANCE; no ceiling on the amount without a threshold
  *  6. Submit — period above the rule's maximum is refused
  *  7. Finance approve — nobody approves their own advance
  *  8. Withdraw — refused once finance has decided
  *  9. Deducting the last line closes the advance (REPAID, nothing outstanding)
+ * 10. Submit — above the country threshold → PENDING_DIRECTOR
+ * 11. Approve — granted terms replace the asked ones, schedule built, contract « à signer »
+ * 12. Approve — a grant above the threshold without the director's validation is refused
+ * 13. Payout — refused while the contract is not signed (country requires it)
  */
 @ExtendWith(MockitoExtension.class)
 class SalaryAdvanceServiceTest {
@@ -142,10 +146,13 @@ class SalaryAdvanceServiceTest {
             return a;
         });
 
-        AdvanceDto dto = service.submit(new SubmitRequest(new BigDecimal("250000"), 3, NOW, null), EMPLOYEE);
+        AdvanceDto dto = service.submit(new SubmitRequest(new BigDecimal("250000"), 3, LocalDate.now(), null), EMPLOYEE);
 
         assertThat(dto.status()).isEqualTo(SalaryAdvanceStatus.PENDING_FINANCE);
         assertThat(dto.amount()).isEqualByComparingTo("250000");
+        assertThat(dto.requestedAmount()).isEqualByComparingTo("250000");
+        assertThat(dto.requestedAvailabilityDate()).isEqualTo(LocalDate.now());
+        assertThat(dto.firstDeductionMonth()).isNull();
         assertThat(dto.currency()).isEqualTo("TND");
     }
 
@@ -153,18 +160,22 @@ class SalaryAdvanceServiceTest {
     void submit_periodAboveMaximum_isRefused() {
         eligibleEmployee();
 
-        assertThatThrownBy(() -> service.submit(new SubmitRequest(new BigDecimal("500"), 4, NOW, null), EMPLOYEE))
+        assertThatThrownBy(() -> service.submit(new SubmitRequest(new BigDecimal("500"), 4, LocalDate.now(), null), EMPLOYEE))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(advanceRepo, never()).save(any());
     }
 
     // ── 7–8. Decisions ───────────────────────────────────────────────────────
 
+    private ApproveRequest grant(String amount, int months) {
+        return new ApproveRequest(new BigDecimal(amount), months, LocalDate.now(), NOW, null);
+    }
+
     @Test
     void approve_ownAdvance_isForbidden() {
         when(advanceRepo.findById(7L)).thenReturn(Optional.of(advance(SalaryAdvanceStatus.PENDING_FINANCE)));
 
-        assertThatThrownBy(() -> service.approve(7L, null, EMPLOYEE))
+        assertThatThrownBy(() -> service.approve(7L, grant("900", 3), EMPLOYEE))
                 .isInstanceOf(AccessDeniedException.class);
     }
 
@@ -201,5 +212,71 @@ class SalaryAdvanceServiceTest {
         assertThat(last.getStatus()).isEqualTo(InstallmentStatus.DEDUCTED);
         assertThat(repaying.getStatus()).isEqualTo(SalaryAdvanceStatus.REPAID);
         assertThat(repaying.getOutstandingAmount()).isEqualByComparingTo("0");
+    }
+
+    // ── 10–13. Spec rework (V39) ─────────────────────────────────────────────
+
+    private SalaryAdvancePolicy policyWithThreshold(String threshold) {
+        SalaryAdvancePolicy p = policy();
+        p.setDirectorThreshold(new BigDecimal(threshold));
+        return p;
+    }
+
+    @Test
+    void submit_aboveThreshold_goesToDirector() {
+        when(hr.employee(EMPLOYEE)).thenReturn(Optional.of(facts(true, LocalDate.now().minusYears(2), false)));
+        when(policyRepo.findByPaysId(PAYS)).thenReturn(Optional.of(policyWithThreshold("1000")));
+        when(advanceRepo.save(any(SalaryAdvance.class))).thenAnswer(inv -> {
+            SalaryAdvance a = inv.getArgument(0);
+            if (a.getId() == null) a.setId(7L);
+            return a;
+        });
+
+        AdvanceDto dto = service.submit(new SubmitRequest(new BigDecimal("1500"), 3, LocalDate.now(), null), EMPLOYEE);
+
+        assertThat(dto.status()).isEqualTo(SalaryAdvanceStatus.PENDING_DIRECTOR);
+    }
+
+    @Test
+    void approve_setsGrantedTerms_buildsSchedule_contractToSign() {
+        SalaryAdvance pending = advance(SalaryAdvanceStatus.PENDING_FINANCE);
+        pending.setFirstDeductionMonth(null);
+        when(advanceRepo.findById(7L)).thenReturn(Optional.of(pending));
+        when(policyRepo.findByPaysId(PAYS)).thenReturn(Optional.of(policy()));
+        when(advanceRepo.save(any(SalaryAdvance.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.approve(7L, grant("600", 2), PAYROLL_USER);
+
+        assertThat(pending.getStatus()).isEqualTo(SalaryAdvanceStatus.APPROVED);
+        assertThat(pending.getAmount()).isEqualByComparingTo("600");
+        assertThat(pending.getInstallments()).isEqualTo(2);
+        assertThat(pending.getEffectiveDate()).isEqualTo(LocalDate.now());
+        assertThat(pending.getFirstDeductionMonth()).isEqualTo(YearMonth.now().atDay(1));
+        assertThat(pending.getContractStatus()).isEqualTo(ContractStatus.TO_SIGN);
+        assertThat(pending.getOutstandingAmount()).isEqualByComparingTo("600");
+        verify(installmentRepo).saveAll(argThat(lines -> ((List<?>) lines).size() == 2));
+    }
+
+    @Test
+    void approve_aboveThreshold_withoutDirector_isRefused() {
+        when(advanceRepo.findById(7L)).thenReturn(Optional.of(advance(SalaryAdvanceStatus.PENDING_FINANCE)));
+        when(policyRepo.findByPaysId(PAYS)).thenReturn(Optional.of(policyWithThreshold("1000")));
+
+        assertThatThrownBy(() -> service.approve(7L, grant("1500", 3), PAYROLL_USER))
+                .isInstanceOf(IllegalStateException.class);
+        verify(installmentRepo, never()).saveAll(any());
+    }
+
+    @Test
+    void disburse_beforeSignedContract_isRefused() {
+        SalaryAdvance approved = advance(SalaryAdvanceStatus.APPROVED);
+        approved.setContractStatus(ContractStatus.TO_SIGN);
+        when(advanceRepo.findById(7L)).thenReturn(Optional.of(approved));
+        when(policyRepo.findByPaysId(PAYS)).thenReturn(Optional.of(policy()));
+
+        assertThatThrownBy(() -> service.disburse(7L,
+                new DisburseRequest("VIREMENT", null, LocalDate.now(), null), PAYROLL_USER))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("contrat");
     }
 }
