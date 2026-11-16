@@ -30,9 +30,9 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * syncEntityCurrencies(): payroll_countries.currency_code and pays_ref.devise are now kept in
- * sync from facturation's entities-for-sync endpoint (the 13 real ARX entities) every 15
- * minutes, instead of being independently hand-maintained.
+ * syncEntityCurrencies(): pays_ref.devise is kept in sync from facturation's entities-for-sync
+ * endpoint (the 13 real ARX entities) every 15 minutes; payroll_countries.currency_code is only
+ * seeded from it while still empty.
  *
  * The third test guards the one real correctness risk: the pays_ref row carries other columns
  * (frenchLabel, ...) that must survive the sync untouched — only `devise` may change. A naive
@@ -64,7 +64,9 @@ class ProfileSyncServiceTest {
     }
 
     @Test
-    void syncEntityCurrencies_existingRow_updatesCurrencyCodeOnly() {
+    void syncEntityCurrencies_existingRow_keepsItsPayrollCurrency() {
+        // Tunisia reports in EUR but pays its salaries in TND: the entity's devise must not
+        // overwrite a currency the payroll country already has.
         List<Map<String, Object>> response = List.of(
                 Map.of("id", 179, "isoCode", "TN", "devise", "EUR"));
         when(restTemplate.exchange(eq(ENTITIES_FOR_SYNC_URL),
@@ -73,6 +75,25 @@ class ProfileSyncServiceTest {
         PayrollCountry existing = new PayrollCountry();
         existing.setPaysId(179L);
         existing.setCurrencyCode("TND");
+        existing.setActive(true);
+        when(payrollCountryRepository.findByPaysId(179L)).thenReturn(Optional.of(existing));
+        lenient().when(paysRefRepository.findById(179L)).thenReturn(Optional.empty());
+
+        service.syncEntityCurrencies();
+
+        assertThat(existing.getCurrencyCode()).isEqualTo("TND");
+        verify(payrollCountryRepository, never()).save(any());
+    }
+
+    @Test
+    void syncEntityCurrencies_existingRowWithoutCurrency_isFilled() {
+        List<Map<String, Object>> response = List.of(
+                Map.of("id", 179, "isoCode", "TN", "devise", "EUR"));
+        when(restTemplate.exchange(eq(ENTITIES_FOR_SYNC_URL),
+                eq(HttpMethod.GET), isNull(), any(ParameterizedTypeReference.class)))
+                .thenReturn(ResponseEntity.ok(response));
+        PayrollCountry existing = new PayrollCountry();
+        existing.setPaysId(179L);
         existing.setActive(true);
         existing.setEurRate(new BigDecimal("1.000"));
         when(payrollCountryRepository.findByPaysId(179L)).thenReturn(Optional.of(existing));
