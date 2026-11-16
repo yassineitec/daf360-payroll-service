@@ -98,6 +98,9 @@ app:
   # Same value as rh-service's INTERNAL_API_KEY — every HR-calling client in this service
   # (salary advances, employee-profile sync) is refused without it.
   hr-internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
+  # The X-Internal-Key other services send to /api/payroll/internal/** (facturation's P&L
+  # workbook reads the monthly headcount). Same shared secret; blank = those endpoints 403.
+  internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
   mail-enabled: ${MAIL_ENABLED:false}
   mail-from: ${MAIL_FROM:noreply@daf360.com}
   # FX rates per paysId (key = paysId as string). 1 local unit → EUR / USD / CHF
