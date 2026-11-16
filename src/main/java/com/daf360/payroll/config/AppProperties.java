@@ -22,6 +22,8 @@ public class AppProperties {
      * HrEmployeeClient).
      */
     private String hrInternalApiKey = "";
+    /** The X-Internal-Key this service checks on /api/payroll/internal/**. Blank disables them. */
+    private String internalApiKey = "";
     private String pdfServiceUrl   = "http://localhost:3000";
     private boolean mailEnabled = false;
     private String mailFrom = "noreply@daf360.com";

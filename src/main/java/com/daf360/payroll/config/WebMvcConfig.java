@@ -14,6 +14,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(paysIsolationInterceptor)
-                .addPathPatterns("/api/payroll/**");
+                .addPathPatterns("/api/payroll/**")
+                // Service-to-service: no user, guarded by X-Internal-Key in the controller.
+                .excludePathPatterns("/api/payroll/internal/**");
     }
 }
