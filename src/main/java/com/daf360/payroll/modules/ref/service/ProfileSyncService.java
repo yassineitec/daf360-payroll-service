@@ -160,11 +160,11 @@ public class ProfileSyncService {
     /**
      * Polls facturation's entities-for-sync endpoint (the 13 real ARX entities) the same way
      * sync() already polls RH, and keeps two things current from it:
-     *  - payroll_countries.currency_code: upsert by paysId, touching only that one column --
-     *    every other field (eur_rate, usd_rate, chf_rate, fiscal_year_start_month,
-     *    forex_api_sources, active) is left exactly as it is. A brand-new row is inserted with
-     *    active = false: a payroll admin must still deliberately onboard the country before the
-     *    engine uses it.
+     *  - payroll_countries.currency_code: filled from the entity's devise only while it is still
+     *    empty (a brand-new row, inserted with active = false: a payroll admin must still
+     *    deliberately onboard the country before the engine uses it). An existing currency is
+     *    never overwritten -- payroll pays in the country's own currency (Tunisia: TND) even
+     *    when the entity reports in another one (Tunisia: EUR).
      *  - pays_ref.devise (the shadow/display table, separate from payroll_countries): set
      *    directly from the synced value instead of the old app.fx-rates YAML fallback.
      */
@@ -188,6 +188,9 @@ public class ProfileSyncService {
                 String devise = (String) m.get("devise");
                 if (paysId == null || devise == null || devise.isBlank()) continue;
 
+                // The entity's devise only SEEDS a payroll country's currency: salaries are paid
+                // in the country's own currency (Tunisia: TND), which can differ from the
+                // currency the entity reports in (Tunisia: EUR) -- an existing currency is kept.
                 PayrollCountry country = payrollCountryRepository.findByPaysId(paysId)
                         .orElseGet(() -> {
                             PayrollCountry fresh = new PayrollCountry();
@@ -195,8 +198,10 @@ public class ProfileSyncService {
                             fresh.setActive(false);
                             return fresh;
                         });
-                country.setCurrencyCode(devise);
-                payrollCountryRepository.save(country);
+                if (country.getCurrencyCode() == null || country.getCurrencyCode().isBlank()) {
+                    country.setCurrencyCode(devise);
+                    payrollCountryRepository.save(country);
+                }
 
                 // CORRECT approach -- load the existing row and mutate only devise. Do NOT
                 // construct a bare `new PaysRef()` with only id/isoCode/devise set and saveAll()
