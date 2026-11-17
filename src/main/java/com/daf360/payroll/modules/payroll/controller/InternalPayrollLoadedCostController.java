@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service-to-service read of each employee's loaded cost (H.10) per month, for facturation's
- * F.04 loaded-cost-rate computation. employeeId is the HR employee_profiles.id. A re-run month
+ * F.04 loaded-cost-rate computation. employeeId is the Users id (profileUserId), as stored by the engine run. A re-run month
  * counts once: the latest calculation per employee and month wins. Authenticated by the
  * shared {@code X-Internal-Key} secret; a missing or blank key fails closed with 403.
  */
