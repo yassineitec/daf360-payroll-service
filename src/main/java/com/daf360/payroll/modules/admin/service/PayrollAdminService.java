@@ -24,9 +24,15 @@ import com.daf360.payroll.modules.salaryadvance.repository.SalaryAdvanceHistoryR
 import com.daf360.payroll.modules.salaryadvance.repository.SalaryAdvanceRepository;
 import com.daf360.payroll.security.PaysScopeContext;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -39,6 +45,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -49,6 +56,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class PayrollAdminService {
+
+    private static final Logger log = LoggerFactory.getLogger(PayrollAdminService.class);
 
     public static final String SOURCE_EMPLOYEE_CONFIG = "EMPLOYEE_CONFIG";
     public static final String SOURCE_SALARY_ADVANCE  = "SALARY_ADVANCE";
@@ -65,6 +74,7 @@ public class PayrollAdminService {
     private final SalaryAdvanceRepository                advanceRepo;
     private final AuditTrailRepository                   auditTrailRepo;
     private final UserContextService                     userContext;
+    private final PlatformTransactionManager              txManager;
 
     /**
      * Every payroll country in the caller's scope — same scope rule as the advance policies
@@ -171,11 +181,14 @@ public class PayrollAdminService {
         PageRequest page = PageRequest.of(0, size);
 
         List<EmployeePayrollConfigHistory> configs = withConfig
-                ? configHistoryRepo.findByPaysIdOrderByChangedAtDesc(paysId, page) : List.of();
+                ? safeList(SOURCE_EMPLOYEE_CONFIG, () -> configHistoryRepo.findByPaysIdOrderByChangedAtDesc(paysId, page))
+                : List.of();
         List<SalaryAdvanceHistory> advances = withAdvances
-                ? advanceHistoryRepo.findLatestByPaysId(paysId, page) : List.of();
+                ? safeList(SOURCE_SALARY_ADVANCE, () -> advanceHistoryRepo.findLatestByPaysId(paysId, page))
+                : List.of();
         List<AuditTrail> generic = withGeneric
-                ? auditTrailRepo.findByPaysId(paysId, page).getContent() : List.of();
+                ? safeList(SOURCE_GENERIC, () -> auditTrailRepo.findByPaysId(paysId, page))
+                : List.of();
 
         Map<Long, SalaryAdvance> advanceById = advanceRepo
                 .findAllById(advances.stream().map(SalaryAdvanceHistory::getSalaryAdvanceId).collect(Collectors.toSet()))
@@ -185,6 +198,10 @@ public class PayrollAdminService {
         configs.forEach(h -> { userIds.add(h.getChangedBy()); userIds.add(h.getProfileUserId()); });
         advances.forEach(h -> userIds.add(h.getActorUserId()));
         advanceById.values().forEach(a -> userIds.add(a.getProfileUserId()));
+        // GENERIC's changed_by is the raw SESSION_CONTEXT('app_user') value -- this platform's
+        // JWT principal is the caller's users_ref id, not a username, so it needs the same
+        // resolution as every other source's actor instead of reaching the screen as a bare id.
+        generic.forEach(g -> { Long id = parseUserId(g.getChangedBy()); if (id != null) userIds.add(id); });
         Map<Long, String> names = names(userIds);
 
         List<AuditEntryDto> out = new ArrayList<>(configs.size() + advances.size() + generic.size());
@@ -210,15 +227,44 @@ public class PayrollAdminService {
                     null, null));
         }
         for (AuditTrail g : generic) {
+            Long actorId = parseUserId(g.getChangedBy());
+            // Unresolved (unknown id, or changed_by was never a numeric id to begin with --
+            // an ad-hoc script, a test fixture) falls back to the raw value, same as before
+            // this method started resolving it: never go from "something" to blank.
+            String actorName = actorId != null ? names.getOrDefault(actorId, g.getChangedBy()) : g.getChangedBy();
             out.add(new AuditEntryDto(
                     SOURCE_GENERIC, g.getId(), g.getChangedAt(), paysId,
-                    null, g.getChangedBy(),
+                    actorId, actorName,
                     null, g.getTableName() + " " + g.getPkJson(),
                     actionLabel(g.getAction()), null, g.getTableName(),
                     g.getOldValue(), g.getNewValue()));
         }
         out.sort(Comparator.comparing(AuditEntryDto::at, Comparator.nullsLast(Comparator.reverseOrder())));
         return out.size() > size ? out.subList(0, size) : out;
+    }
+
+    /**
+     * Runs one source's query in isolation: a source that is unavailable (e.g. a table not yet
+     * provisioned in this environment) logs a warning and drops out of the merged log instead of
+     * failing the whole {@link #audit} call for every other source too.
+     *
+     * The query runs in its own {@code REQUIRES_NEW} transaction rather than joining
+     * {@code audit()}'s read-only one: a {@link DataAccessException} crossing a transactional
+     * proxy boundary marks the transaction it belongs to rollback-only, even once this method
+     * catches it. Without this isolation, one failing source still dooms the shared transaction
+     * and {@code audit()} fails at commit time with {@code UnexpectedRollbackException} — the
+     * very failure this method exists to avoid.
+     */
+    private <T> List<T> safeList(String source, Supplier<List<T>> query) {
+        TransactionTemplate isolated = new TransactionTemplate(txManager);
+        isolated.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        isolated.setReadOnly(true);
+        try {
+            return isolated.execute(status -> query.get());
+        } catch (DataAccessException e) {
+            log.warn("Audit source {} unavailable, omitting from the merged log: {}", source, e.getMessage());
+            return List.of();
+        }
     }
 
     private static String actionLabel(String code) {
@@ -228,6 +274,18 @@ public class PayrollAdminService {
             case "D" -> "DELETE";
             default -> code;
         };
+    }
+
+    /** {@code changed_by} is free-text as far as the trigger is concerned -- null for a
+     *  scheduled job, this platform's numeric user id for a real request. Anything else
+     *  (never expected, but not worth failing the whole audit call over) is left unresolved. */
+    private static Long parseUserId(String raw) {
+        if (raw == null) return null;
+        try {
+            return Long.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private Map<Long, String> names(Collection<Long> ids) {

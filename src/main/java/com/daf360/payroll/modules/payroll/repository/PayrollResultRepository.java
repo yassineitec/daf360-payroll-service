@@ -53,6 +53,15 @@ public interface PayrollResultRepository extends JpaRepository<PayrollResult, Lo
                                                  @Param("toKey") int toKey);
 
     /**
+     * Nombre de collaborateurs payés par mois d'une année, pour un pays : une ligne
+     * {@code [mois, effectif]} par mois calculé. Un mois relancé ne compte chaque
+     * collaborateur qu'une fois (DISTINCT).
+     */
+    @Query("SELECT r.periodMonth, COUNT(DISTINCT r.employeeId) FROM PayrollResult r "
+         + "WHERE r.paysId = :paysId AND r.periodYear = :year GROUP BY r.periodMonth")
+    List<Object[]> countEmployeesByMonth(@Param("paysId") Long paysId, @Param("year") int year);
+
+    /**
      * Le DERNIER calcul de chaque collaborateur parmi {@code rows} (même période). Chaque
      * lancement insère un nouveau résultat (l'enregistrement est immuable) : relancer un mois
      * laisse l'ancien en base, et l'additionner compterait ce collaborateur deux fois. Le plus

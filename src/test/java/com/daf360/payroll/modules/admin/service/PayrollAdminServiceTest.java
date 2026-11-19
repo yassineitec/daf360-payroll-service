@@ -5,7 +5,6 @@ import com.daf360.payroll.modules.admin.dto.PayrollCountryDto;
 import com.daf360.payroll.modules.admin.dto.SavePayrollCountryRequest;
 import com.daf360.payroll.modules.admin.entity.AuditTrail;
 import com.daf360.payroll.modules.admin.repository.AuditTrailRepository;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.security.access.AccessDeniedException;
 import java.util.Optional;
 import com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollConfigHistory;
@@ -27,6 +26,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -59,12 +61,24 @@ class PayrollAdminServiceTest {
 
     PayrollAdminService service;
 
+    /** Runs the callback immediately and commits: {@code safeList}'s per-source isolation needs
+     *  a real transaction manager, but this test only cares that the catch/merge logic works,
+     *  not about actual transactional isolation (verified instead against the real dev DB). */
+    private final PlatformTransactionManager noopTxManager = new PlatformTransactionManager() {
+        @Override public org.springframework.transaction.TransactionStatus getTransaction(TransactionDefinition definition) {
+            return new SimpleTransactionStatus();
+        }
+        @Override public void commit(org.springframework.transaction.TransactionStatus status) { }
+        @Override public void rollback(org.springframework.transaction.TransactionStatus status) { }
+    };
+
     private static final OffsetDateTime T0 = OffsetDateTime.parse("2026-09-01T10:00:00Z");
 
     @BeforeEach
     void setUp() {
         service = new PayrollAdminService(countryRepo, paysRefRepo, usersRefRepo,
-                configHistoryRepo, advanceHistoryRepo, advanceRepo, auditTrailRepo, userContext);
+                configHistoryRepo, advanceHistoryRepo, advanceRepo, auditTrailRepo, userContext,
+                noopTxManager);
     }
 
     @Test
@@ -154,7 +168,7 @@ class PayrollAdminServiceTest {
         generic.setChangedBy("alice");
         generic.setChangedAt(T0.plusHours(2));
 
-        when(auditTrailRepo.findByPaysId(eq(179L), any())).thenReturn(new PageImpl<>(List.of(generic)));
+        when(auditTrailRepo.findByPaysId(eq(179L), any())).thenReturn(List.of(generic));
 
         List<AuditEntryDto> log = service.audit(179L, 50, false, false, true);
 
@@ -166,6 +180,76 @@ class PayrollAdminServiceTest {
         assertEquals("payroll_countries {\"pays_id\":179}", entry.subjectName());
         assertEquals("alice", entry.actorName());
         assertNull(entry.actorId());
+    }
+
+    /** changed_by holds this platform's numeric users_ref id (the JWT principal, set as
+     *  SESSION_CONTEXT('app_user') -- see SessionContextDataSource), not a username, for any
+     *  row written through the real app rather than a test fixture or ad-hoc script. */
+    @Test
+    void audit_genericSource_resolvesNumericChangedByToAName() {
+        AuditTrail generic = new AuditTrail();
+        generic.setId(31L);
+        generic.setTableName("payroll_countries");
+        generic.setPkJson("{\"pays_id\":179}");
+        generic.setAction("U");
+        generic.setChangedBy("10001");
+        generic.setChangedAt(T0.plusHours(2));
+
+        when(auditTrailRepo.findByPaysId(eq(179L), any())).thenReturn(List.of(generic));
+        when(usersRefRepo.findAllById(anyIterable())).thenReturn(List.of(user(10001L, "Jean Dupont")));
+
+        List<AuditEntryDto> log = service.audit(179L, 50, false, false, true);
+
+        assertEquals(1, log.size());
+        AuditEntryDto entry = log.get(0);
+        assertEquals(10001L, entry.actorId());
+        assertEquals("Jean Dupont", entry.actorName());
+    }
+
+    /** A numeric changed_by whose id no longer resolves (deleted/unknown user) falls back to the
+     *  raw id rather than going blank -- the row still names an actor, just not by name. */
+    @Test
+    void audit_genericSource_unknownNumericChangedBy_fallsBackToRawId() {
+        AuditTrail generic = new AuditTrail();
+        generic.setId(32L);
+        generic.setTableName("payroll_countries");
+        generic.setPkJson("{\"pays_id\":179}");
+        generic.setAction("U");
+        generic.setChangedBy("99999");
+        generic.setChangedAt(T0.plusHours(2));
+
+        when(auditTrailRepo.findByPaysId(eq(179L), any())).thenReturn(List.of(generic));
+        when(usersRefRepo.findAllById(anyIterable())).thenReturn(List.of());
+
+        List<AuditEntryDto> log = service.audit(179L, 50, false, false, true);
+
+        AuditEntryDto entry = log.get(0);
+        assertEquals(99999L, entry.actorId());
+        assertEquals("99999", entry.actorName());
+    }
+
+    @Test
+    void audit_oneSourceFailing_stillReturnsTheOthers() {
+        EmployeePayrollConfigHistory config = new EmployeePayrollConfigHistory();
+        config.setId(10L);
+        config.setPaysId(179L);
+        config.setProfileUserId(7L);
+        config.setChangedBy(1L);
+        config.setContractType("CDI");
+        config.setReason("Augmentation");
+        config.setChangedAt(T0);
+
+        when(configHistoryRepo.findByPaysIdOrderByChangedAtDesc(eq(179L), any())).thenReturn(List.of(config));
+        when(advanceHistoryRepo.findLatestByPaysId(eq(179L), any()))
+                .thenThrow(new org.springframework.dao.InvalidDataAccessResourceUsageException(
+                        "Invalid object name 'salary_advance_history'."));
+        when(advanceRepo.findAllById(anyIterable())).thenReturn(List.of());
+        when(usersRefRepo.findAllById(anyIterable())).thenReturn(List.of(user(1L, "Admin Paie"), user(7L, "Salma")));
+
+        List<AuditEntryDto> log = service.audit(179L, 50, true, true, false);
+
+        assertEquals(1, log.size());
+        assertEquals(PayrollAdminService.SOURCE_EMPLOYEE_CONFIG, log.get(0).source());
     }
 
     // ── Pays de paie : création / modification ──────────────────────────────

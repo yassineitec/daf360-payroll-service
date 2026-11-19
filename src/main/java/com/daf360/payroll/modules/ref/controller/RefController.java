@@ -4,8 +4,8 @@ import com.daf360.payroll.modules.payroll.entity.PayrollCountry;
 import com.daf360.payroll.modules.payroll.repository.PayrollCountryRepository;
 import com.daf360.payroll.modules.ref.entity.PaysRef;
 import com.daf360.payroll.modules.ref.entity.UsersRef;
-import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
 import com.daf360.payroll.modules.ref.repository.PayrollFxRateRepository;
+import com.daf360.payroll.modules.ref.repository.PaysRefRepository;
 import com.daf360.payroll.modules.ref.repository.UsersRefRepository;
 import com.daf360.payroll.modules.ref.service.ProfileSyncService;
 import com.daf360.payroll.security.PermissionCatalog;
@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -108,6 +109,22 @@ public class RefController {
         // Same exclusion as /users. It was missing here, which made this endpoint a way back in
         // for exactly the accounts the other one hides.
         return usersRefRepository.findByPaysIdAndIsEmployeeTrueOrderByFullNameAsc(paysId);
+    }
+
+    /**
+     * One user by id, unfiltered (unlike {@link #listUsers()} / {@link #usersByPays}: a change
+     * log's actor can be a test or machine account, which those two deliberately hide).
+     *
+     * Added for the audit screen's field-diff view: a raw `*_by` column inside a GENERIC row's
+     * JSON snapshot (e.g. `invoices.emitted_by`) is this platform's numeric users_ref id, not a
+     * name -- the frontend resolves it through this endpoint the same way it already resolves
+     * the audit log's own actor.
+     */
+    @GetMapping("/users/{id}")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_PARAMSET + "','" + PermissionCatalog.RUN_SIMULATION + "','" + PermissionCatalog.SUPER_ADMIN + "')")
+    public UsersRef getUser(@PathVariable Long id) {
+        return usersRefRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Utilisateur introuvable : " + id));
     }
 
     @PostMapping("/sync")
