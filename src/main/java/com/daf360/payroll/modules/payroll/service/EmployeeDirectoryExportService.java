@@ -20,6 +20,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.Month;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -54,6 +56,8 @@ public class EmployeeDirectoryExportService {
     private static final int MAX_ROWS = 10_000;
     /** Lot de la requête {@code IN} (SQL Server : 2100 paramètres au plus). */
     private static final int ID_BATCH = 1000;
+    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Africa/Tunis");
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     private final PayrollResultRepository resultRepo;
     private final PayrollCountryRepository countryRepo;
@@ -76,12 +80,23 @@ public class EmployeeDirectoryExportService {
         Map<Long, String> currencies = new HashMap<>();
 
         List<List<Object>> rows = new ArrayList<>(source.size());
+        List<List<Object>> details = new ArrayList<>();
         for (Row r : source) {
             List<PayrollResult> results = r.userId() != null ? byEmployee.getOrDefault(r.userId(), List.of()) : List.of();
             List<Object> line = new ArrayList<>(Arrays.<Object>asList(
                     r.fullName(), r.employeeId(), r.department(), r.contract(), r.pays(), r.status()));
             line.addAll(kpis(results, range, today, currencies, lang));
             rows.add(line);
+            // Feuille « Détail par période » : mêmes colonnes que l'export de la page historique
+            // (/payroll/engine-results/:id), mois de la période cumulée, du plus récent au plus ancien.
+            List<PayrollResult> months = new ArrayList<>(inPeriod(results, range));
+            months.sort(Comparator.comparingInt(EmployeeDirectoryExportService::key).reversed());
+            for (PayrollResult p : months) {
+                details.add(Arrays.asList(r.fullName(), r.employeeId(), monthName(key(p), lang, true),
+                        currencyOf(p, currencies),
+                        scale2(grossOf(p)), scale2(nz(p.getStrate3())), scale2(nz(irppOf(p))),
+                        scale2(nz(netOf(p))), calculatedOn(p)));
+            }
         }
 
         List<String> headers = List.of(
@@ -94,6 +109,8 @@ public class EmployeeDirectoryExportService {
                 lang.pick("Période cumulée", "Cumulated period"),
                 lang.pick("Devise", "Currency"),
                 lang.pick("Brut cumulé", "Cumulated gross"),
+                lang.pick("CNSS salariale cumulée", "Cumulated employee CNSS"),
+                lang.pick("IRPP cumulé", "Cumulated IRPP"),
                 lang.pick("Retenues cumulées (cotisations + impôt)", "Cumulated deductions (contributions + tax)"),
                 lang.pick("Retenues (% du brut)", "Deductions (% of gross)"),
                 lang.pick("Net cumulé", "Cumulated net"),
@@ -102,7 +119,20 @@ public class EmployeeDirectoryExportService {
                 lang.pick("Mois calculés", "Months calculated"),
                 lang.pick("Mois manquants", "Missing months"));
 
-        byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Collaborateurs", "Employees"), headers, rows)));
+        List<String> detailHeaders = List.of(
+                lang.pick("Collaborateur", "Employee"),
+                lang.pick("Matricule", "Employee ID"),
+                lang.pick("Période", "Period"),
+                lang.pick("Devise", "Currency"),
+                lang.pick("Brut", "Gross"),
+                lang.pick("CNSS salariale", "Employee CNSS"),
+                "IRPP",
+                lang.pick("Net à payer", "Net pay"),
+                lang.pick("Calculé le", "Calculated on"));
+
+        byte[] bytes = XlsxExport.write(List.of(
+                new SheetData(lang.pick("Collaborateurs", "Employees"), headers, rows),
+                new SheetData(lang.pick("Détail par période", "Detail by period"), detailHeaders, details)));
         return ExportFile.xlsx(lang.pick("Collaborateurs_paie_", "Payroll_employees_") + today + ".xlsx", bytes);
     }
 
@@ -125,7 +155,7 @@ public class EmployeeDirectoryExportService {
             periodLabel = rangeLabel(range, lang);
         } else {
             if (all.isEmpty()) {
-                return Arrays.asList(null, null, null, null, null, null, null, null, null, null);
+                return Arrays.asList(null, null, null, null, null, null, null, null, null, null, null, null);
             }
             int year = all.stream().mapToInt(PayrollResult::getPeriodYear).max().getAsInt();
             rows = all.stream().filter(r -> r.getPeriodYear() == year).toList();
@@ -142,28 +172,50 @@ public class EmployeeDirectoryExportService {
                 .collect(Collectors.joining(", "));
         String monthsCell = rows.size() + " / " + monthsTotal;
         if (rows.isEmpty()) {
-            return Arrays.asList(periodLabel, null, null, null, null, null, null, null, monthsCell, missing);
+            return Arrays.asList(periodLabel, null, null, null, null, null, null, null, null, null, monthsCell, missing);
         }
 
-        BigDecimal gross = BigDecimal.ZERO, net = BigDecimal.ZERO, deductions = BigDecimal.ZERO;
+        BigDecimal gross = BigDecimal.ZERO, net = BigDecimal.ZERO, cnss = BigDecimal.ZERO, irpp = BigDecimal.ZERO;
         for (PayrollResult r : rows) {
             gross = gross.add(grossOf(r));
             net = net.add(nz(netOf(r)));
             // Retenues salariales réelles : S3 (CNSS salariale) + IRPP — comme la page historique.
-            deductions = deductions.add(nz(r.getStrate3())).add(nz(irppOf(r)));
+            cnss = cnss.add(nz(r.getStrate3()));
+            irpp = irpp.add(nz(irppOf(r)));
         }
+        BigDecimal deductions = cnss.add(irpp);
         BigDecimal n = BigDecimal.valueOf(rows.size());
         BigDecimal pct = gross.signum() > 0
                 ? deductions.multiply(BigDecimal.valueOf(100)).divide(gross, 1, RoundingMode.HALF_UP)
                 : null;
         PayrollResult last = rows.stream().max(Comparator.comparingInt(EmployeeDirectoryExportService::key)).get();
-        String currency = currencies.computeIfAbsent(last.getPaysId(), id -> id == null ? null
-                : countryRepo.findByPaysId(id).map(PayrollCountry::getCurrencyCode).orElse(null));
+        String currency = currencyOf(last, currencies);
 
         return Arrays.asList(periodLabel, currency,
-                scale2(gross), scale2(deductions), pct, scale2(net),
+                scale2(gross), scale2(cnss), scale2(irpp), scale2(deductions), pct, scale2(net),
                 gross.divide(n, 2, RoundingMode.HALF_UP), net.divide(n, 2, RoundingMode.HALF_UP),
                 monthsCell, missing);
+    }
+
+    /** Mois retenus pour un collaborateur : ceux du filtre Période, sinon son année la plus récente
+     *  (mêmes mois que les colonnes cumulées). */
+    private static List<PayrollResult> inPeriod(List<PayrollResult> all, int[] range) {
+        if (range != null) return all.stream().filter(r -> between(key(r), range)).toList();
+        if (all.isEmpty()) return List.of();
+        int year = all.stream().mapToInt(PayrollResult::getPeriodYear).max().getAsInt();
+        return all.stream().filter(r -> r.getPeriodYear() == year).toList();
+    }
+
+    private String currencyOf(PayrollResult r, Map<Long, String> currencies) {
+        if (r.getPaysId() == null) return null;
+        return currencies.computeIfAbsent(r.getPaysId(),
+                id -> countryRepo.findByPaysId(id).map(PayrollCountry::getCurrencyCode).orElse(null));
+    }
+
+    /** « 09/11/2026 12:17 » — comme la colonne « Calculé le » de la page historique. */
+    private static String calculatedOn(PayrollResult r) {
+        return r.getCalculatedAt() != null
+                ? r.getCalculatedAt().atZoneSameInstant(DISPLAY_ZONE).format(DATE_TIME) : null;
     }
 
     /** Résultats des collaborateurs de la liste, dans le périmètre pays de l'utilisateur,
