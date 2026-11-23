@@ -5,6 +5,7 @@ import com.daf360.payroll.common.export.ExportLang;
 import com.daf360.payroll.common.export.ExportRows;
 import com.daf360.payroll.common.export.PdfRenderClient;
 import com.daf360.payroll.common.export.XlsxExport;
+import com.daf360.payroll.common.export.XlsxExport.RowFormat;
 import com.daf360.payroll.common.export.XlsxExport.SheetData;
 import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import com.daf360.payroll.modules.payroll.repository.PayrollResultRepository;
@@ -28,6 +29,7 @@ import java.time.Month;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
@@ -104,11 +106,50 @@ public class PayrollResultExportService {
      */
     @Transactional(readOnly = true)
     public ExportFile exportHistoryXlsx(Long employeeId, Collection<String> ids, ExportLang lang) {
-        List<List<Object>> rows = historyResults(employeeId, ids).stream().map(r -> Arrays.<Object>asList(
-                period(r, lang), historyGross(r), r.getStrate3(), historyIrpp(r), netOf(r), calculatedOn(r)
-        )).toList();
-        byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Charge salariale", "Salary cost"), historyHeaders(lang), rows)));
+        // Comme l'export des factures : chaque période (en gras, avec ses totaux du tableau),
+        // puis ses rubriques regroupées sous elle (repliables avec + / − dans Excel) — on y
+        // retrouve le détail de la CNSS, de l'IRPP, etc. Les colonnes propres à l'autre niveau
+        // restent vides.
+        List<List<Object>> rows = new ArrayList<>();
+        List<RowFormat> formats = new ArrayList<>();
+        for (PayrollResult r : historyResults(employeeId, ids)) {
+            List<Line> own;
+            try {
+                own = lines(r);
+            } catch (IllegalStateException e) {
+                own = List.of();   // détail illisible : la ligne de la période reste exportée
+            }
+            rows.add(Arrays.<Object>asList(
+                    period(r, lang),
+                    own.size() + (own.size() == 1 ? lang.pick(" rubrique", " pay item") : lang.pick(" rubriques", " pay items")),
+                    null, null, null, null,
+                    historyGross(r), r.getStrate3(), historyIrpp(r), netOf(r), calculatedOn(r)));
+            formats.add(PERIOD_ROW);
+            for (Line l : own) {
+                rows.add(Arrays.<Object>asList(
+                        null,
+                        (l.rubriqueCode() != null ? l.rubriqueCode() + " — " : "") + label(l, lang),
+                        "S" + l.strate(), lang.label(NATURES, l.nature()),
+                        l.assiette(), signed(l),
+                        null, null, null, null, null));
+                formats.add(RUBRIQUE_ROW);
+            }
+        }
+        byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Charge salariale", "Salary cost"),
+                historyXlsxHeaders(lang), rows, formats)));
         return ExportFile.xlsx("Charge_salariale_" + employeeId + ".xlsx", bytes);
+    }
+
+    private static final RowFormat PERIOD_ROW   = new RowFormat(true, 0, true, -1);
+    private static final RowFormat RUBRIQUE_ROW = new RowFormat(false, 1, false, 1);
+
+    private static List<String> historyXlsxHeaders(ExportLang lang) {
+        return List.of(
+                lang.pick("Période", "Period"), lang.pick("Rubrique", "Pay item"),
+                lang.pick("Strate", "Tier"), "Nature",
+                lang.pick("Assiette", "Base"), lang.pick("Montant", "Amount"),
+                lang.pick("Brut", "Gross"), lang.pick("CNSS salariale", "Employee CNSS"), "IRPP",
+                lang.pick("Net à payer", "Net pay"), lang.pick("Calculé le", "Calculated on"));
     }
 
     /** Même historique en PDF (pdf-service) ; {@code employeeName} = nom affiché dans l'en-tête. */

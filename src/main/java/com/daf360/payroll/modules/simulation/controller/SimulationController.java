@@ -52,8 +52,13 @@ public class SimulationController {
         this.userContext = userContext;
     }
 
+    /**
+     * Also open to the DAF deciding hiring costs (APPROVE_HIRING_COST): a counter-proposal is
+     * costed in its decision modal before it goes to the candidate, and a country director need
+     * not hold the payroll simulator permission for that.
+     */
     @PostMapping("/individual")
-    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_SIMULATION + "')")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.RUN_SIMULATION + "','APPROVE_HIRING_COST')")
     public ResponseEntity<SimulationResultDto> runIndividual(@RequestBody @Valid SimulationRequest req) {
         Long userId = userContext.currentUserId();
         SimulationResultDto result = individualService.simulate(req, userId);
