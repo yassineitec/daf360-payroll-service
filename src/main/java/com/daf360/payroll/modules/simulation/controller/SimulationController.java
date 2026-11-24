@@ -13,7 +13,14 @@ import com.daf360.payroll.modules.simulation.service.IndividualSimulationService
 import com.daf360.payroll.modules.simulation.service.SimulationExcelExportService;
 import com.daf360.payroll.modules.simulation.service.SimulationHistoryService;
 import com.daf360.payroll.modules.simulation.service.SimulationPdfService;
+import com.daf360.payroll.modules.simulation.dto.EmployeeWhatIfRequest;
+import com.daf360.payroll.modules.simulation.dto.EmployeeWhatIfResponse;
+import com.daf360.payroll.security.PaysScopeGuard;
 import com.daf360.payroll.security.PermissionCatalog;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import java.util.stream.Collectors;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -93,27 +100,66 @@ public class SimulationController {
     @GetMapping("/individual/history")
     @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.VIEW_AGGREGATE + "')")
     public List<SimulationResultDto> history(@RequestParam Long paysId) {
-        return individualService.history(paysId);
+        // A2: cohort rows are real employees' figures — individual view only.
+        boolean individual = PaysScopeGuard.hasAuthority(PermissionCatalog.VIEW_INDIVIDUAL)
+                || PaysScopeGuard.isSuperAdmin();
+        return individualService.history(paysId).stream()
+                .filter(r -> individual || !"COHORT".equals(r.simulationType()))
+                .toList();
     }
 
+    /** Returns per-employee figures (gross, net, IRPP, loaded cost, profileUserId): running it
+     *  now also requires the individual view (A2) — RUN_SIMULATION alone no longer suffices. */
     @PostMapping("/cohort")
-    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_SIMULATION + "')")
+    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_SIMULATION + "') and hasAnyAuthority('"
+            + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.SUPER_ADMIN + "')")
     public ResponseEntity<List<SimulationResultDto>> runCohort(@RequestBody @Valid CohortSimulationRequest req) {
         Long userId = userContext.currentUserId();
         List<SimulationResultDto> results = cohortService.simulate(req, userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(results);
     }
 
+    /** Per-employee rows of a stored cohort: individual view only (A2, VIEW_AGGREGATE refused),
+     *  and the cohort's own country must be in scope (A1, checked in the service). */
     @GetMapping("/cohort/{cohortId}")
-    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.VIEW_AGGREGATE + "')")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.SUPER_ADMIN + "')")
     public List<SimulationResultDto> getCohortResults(@PathVariable Long cohortId) {
         return cohortService.getByCohort(cohortId);
     }
 
+    /**
+     * Cohort aggregate / salary what-if for a group (A2, B2). Open to whoever may run or read
+     * simulations; what comes back depends on the caller: PAYROLL_VIEW_INDIVIDUAL holders get
+     * exact figures for any group size and may ask for the per-employee rows
+     * ({@code includeEmployees}); everyone else gets totals only, and counts only below the
+     * minimum group size.
+     */
     @PostMapping("/cohort/aggregate")
-    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_SIMULATION + "')")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.RUN_SIMULATION + "','" + PermissionCatalog.VIEW_AGGREGATE
+            + "','" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.SUPER_ADMIN + "')")
     public ResponseEntity<CohortAggregateResponse> runCohortAggregate(@RequestBody @Valid CohortFilterRequest req) {
-        return ResponseEntity.ok(cohortAggregateService.aggregate(req));
+        return ResponseEntity.ok(cohortAggregateService.aggregate(req, access()));
+    }
+
+    /** Salary what-if for ONE employee of the country (B2, DEC12): individual view only. */
+    @PostMapping("/cohort/what-if/employee")
+    @PreAuthorize("hasAnyAuthority('" + PermissionCatalog.VIEW_INDIVIDUAL + "','" + PermissionCatalog.SUPER_ADMIN + "')")
+    public ResponseEntity<EmployeeWhatIfResponse> runEmployeeWhatIf(@RequestBody @Valid EmployeeWhatIfRequest req) {
+        return ResponseEntity.ok(cohortAggregateService.whatIfEmployee(req, access()));
+    }
+
+    /** The caller as the cohort sees it: individual view or aggregate only, plus who for the
+     *  access log (DEC13). Permission codes are rights, not personal data. */
+    private CohortAggregateService.CohortAccess access() {
+        boolean individual = PaysScopeGuard.hasAuthority(PermissionCatalog.VIEW_INDIVIDUAL)
+                || PaysScopeGuard.isSuperAdmin();
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String perms = auth == null ? "" : auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(a -> a.equals(PermissionCatalog.VIEW_INDIVIDUAL) || a.equals(PermissionCatalog.VIEW_AGGREGATE)
+                        || a.equals(PermissionCatalog.RUN_SIMULATION) || a.equals(PermissionCatalog.SUPER_ADMIN))
+                .sorted().collect(Collectors.joining("+"));
+        return new CohortAggregateService.CohortAccess(individual, userContext.currentUserId(), perms);
     }
 
     @GetMapping("/{id}/export-pdf")

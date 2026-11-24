@@ -1,19 +1,33 @@
 package com.daf360.payroll.modules.simulation.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
- * Aggregate result of a cohort simulation — no individual salary figures exposed.
+ * Result of a cohort simulation (aggregate + salary what-if).
+ *
+ * <p><b>Compatibility (DEC15).</b> The first thirteen fields are the original contract and keep
+ * their names and meaning; everything after them is new and optional. One deliberate change of
+ * value, not of meaning: an amount the caller may not see (group below the minimum size for a
+ * non-individual role) or that cannot be computed honestly (no converged employee, no FX rate)
+ * is now {@code null} instead of {@code 0}.
+ *
+ * <p><b>Visibility (DEC1).</b> {@code visibility = AGGREGATE} responses never carry
+ * {@code employees}; when {@code suppressed} is true they carry no amount at all — only counts.
  */
+@JsonInclude(JsonInclude.Include.ALWAYS)
 public record CohortAggregateResponse(
 
-        /** Number of employees matched by the filter. */
+        /** Employees whose figures enter the totals (matched − excluded − failed − non-converged). */
         int headcount,
 
-        /** Sum of all matched employees' current loadedCost (S5) per month, local currency. */
+        /** Sum of the included employees' current loaded cost (S5) per month, local currency. */
         BigDecimal currentMonthlyCost,
 
-        /** Sum of projected loadedCost after applying the modifier, per month, local currency. */
+        /** Sum of their projected loaded cost after the change, per month, local currency. */
         BigDecimal projectedMonthlyCost,
 
         /** projectedMonthlyCost − currentMonthlyCost. */
@@ -22,7 +36,7 @@ public record CohortAggregateResponse(
         /** deltaMonthly × 12. */
         BigDecimal deltaAnnual,
 
-        /** currentMonthlyCost in EUR. */
+        /** currentMonthlyCost in EUR — null when no trustworthy rate exists (DEC7). */
         BigDecimal currentMonthlyCostEur,
 
         /** projectedMonthlyCost in EUR. */
@@ -34,15 +48,92 @@ public record CohortAggregateResponse(
         /** projectedMonthlyCost in CHF. */
         BigDecimal projectedMonthlyCostChf,
 
-        /** ISO currency code of the local currency for this paysId. */
+        /** ISO code of the country's payroll currency. */
         String localCurrency,
 
-        /** Applied modifier type: PCT or ABSOLU. */
+        /** Modifier type as sent (upper-cased): PCT / ABSOLU (legacy) or PERCENT / AMOUNT. */
         String modifierType,
 
-        /** Applied modifier value. */
+        /** Modifier value as sent. */
         BigDecimal modifierValue,
 
-        /** Filters that were applied: grade/discipline/contractType/entite (null = all). */
-        CohortFilterRequest appliedFilters
-) {}
+        /** The request as received. */
+        CohortFilterRequest appliedFilters,
+
+        // ── new, optional ─────────────────────────────────────────────────────────────────
+
+        /** INDIVIDUAL (exact figures, per-employee rows allowed) or AGGREGATE (k-threshold). */
+        String visibility,
+
+        /** True when the group is below {@code minGroupSize} for an AGGREGATE caller: no amounts. */
+        boolean suppressed,
+
+        /** k — the minimum group size for AGGREGATE callers (configurable, default 5). */
+        int minGroupSize,
+
+        /** Employees the filters selected in HR (active workforce of the country). */
+        int matched,
+
+        /** Matched employees without a usable HR net salary — not simulated, counted here. */
+        int excludedNoSalary,
+
+        /** Matched employees whose computation threw — not summed. */
+        int failed,
+
+        /** Matched employees whose engine run did not converge — never summed (DEC4). */
+        int nonConverged,
+
+        /** Simulated employees without a payroll configuration: all benefits of the set assumed (DEC5). */
+        int benefitsAssumed,
+
+        /** Simulated employees whose current gross came from their payroll configuration (DEC6). */
+        int grossFromConfig,
+
+        Long parameterSetId,
+        Integer parameterSetVersion,
+        Integer fiscalYear,
+
+        /** When the figures were computed (server clock). */
+        OffsetDateTime asOf,
+
+        /** One-line summary of where the EUR / CHF rates came from (DEC7). */
+        String fxSource,
+
+        /** Rates and their sources. */
+        CohortFx fx,
+
+        /** PERCENT or AMOUNT (canonical form of modifierType). */
+        String changeType,
+
+        /** NET (default) or GROSS: what the change is applied to (DEC2). */
+        String salaryBase,
+
+        /** Working-day base passed to the engine (DEC9). */
+        int workingDays,
+
+        BigDecimal avgNetBefore,
+        BigDecimal avgNetAfter,
+        BigDecimal avgGrossBefore,
+        BigDecimal avgGrossAfter,
+
+        /** deltaMonthly / currentMonthlyCost × 100. */
+        BigDecimal deltaPct,
+
+        /** Warnings and explanations for the screen (codes are stable, texts are French). */
+        List<CohortMessage> messages,
+
+        /** Per-employee rows — only with includeEmployees=true and PAYROLL_VIEW_INDIVIDUAL. */
+        List<EmployeeWhatIfRow> employees
+) {
+
+    /** A warning or explanation; {@code code} is what the UI translates. */
+    public record CohortMessage(String code, String level, String text) {
+        public static CohortMessage warn(String code, String text) { return new CohortMessage(code, "WARNING", text); }
+        public static CohortMessage info(String code, String text) { return new CohortMessage(code, "INFO", text); }
+        public static CohortMessage error(String code, String text) { return new CohortMessage(code, "ERROR", text); }
+    }
+
+    /** Exchange rates used for the EUR / CHF columns: 1 local unit = {@code eurRate} EUR. */
+    public record CohortFx(String currency, BigDecimal eurRate, String eurSource,
+                           BigDecimal chfRate, String chfSource, OffsetDateTime syncedAt) {}
+}

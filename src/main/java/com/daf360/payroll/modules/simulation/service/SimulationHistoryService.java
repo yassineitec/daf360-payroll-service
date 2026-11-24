@@ -125,6 +125,12 @@ public class SimulationHistoryService {
                 throw new AccessDeniedException("Simulation hors de votre périmètre pays");
             }
         }
+        // A2: a COHORT row is a real employee's figures — individual view only.
+        if ("COHORT".equals(r.getSimulationType()) && !isSuperAdmin()
+                && !com.daf360.payroll.security.PaysScopeGuard.hasAuthority(
+                        com.daf360.payroll.security.PermissionCatalog.VIEW_INDIVIDUAL)) {
+            throw new AccessDeniedException("Simulation de cohorte : vue individuelle requise.");
+        }
         return r;
     }
 
