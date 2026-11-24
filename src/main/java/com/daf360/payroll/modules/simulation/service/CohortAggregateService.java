@@ -117,6 +117,10 @@ public class CohortAggregateService {
         int headcount = included.size();
         int benefitsAssumed = (int) rows.stream().filter(EmployeeWhatIfRow::benefitsAssumed).count();
         int grossFromConfig = (int) rows.stream().filter(r -> "CONFIG".equals(r.grossSource())).count();
+        int benefitsNoneSelected = (int) rows.stream().filter(EmployeeWhatIfRow::benefitsNoneSelected).count();
+        BigDecimal coverage = matched.isEmpty() ? null
+                : BigDecimal.valueOf(headcount).divide(BigDecimal.valueOf(matched.size()), 4, RoundingMode.HALF_UP);
+        boolean lowCoverage = coverage != null && coverage.compareTo(settings.minCoverage()) < 0;
         boolean suppressed = !access.individual() && headcount > 0 && headcount < settings.minGroupSize();
         boolean showAmounts = headcount > 0 && !suppressed;
 
@@ -142,6 +146,15 @@ public class CohortAggregateService {
         if (benefitsAssumed > 0) {
             messages.add(CohortMessage.warn("BENEFITS_ASSUMED", benefitsAssumed
                     + " employé(s) sans configuration de paie : tous les avantages du jeu de paramètres leur sont appliqués."));
+        }
+        if (benefitsNoneSelected > 0) {
+            messages.add(CohortMessage.warn("BENEFITS_NONE_SELECTED", benefitsNoneSelected
+                    + " employé(s) ont une configuration de paie sans aucun avantage sélectionné : ils sont calculés"
+                    + " sans avantage, ce qui augmente le brut nécessaire pour un net donné."));
+        }
+        if (lowCoverage) {
+            messages.add(CohortMessage.warn("LOW_COVERAGE", headcount + " employé(s) sur " + matched.size()
+                    + " sont inclus dans les totaux : les chiffres ne couvrent qu'une partie du groupe."));
         }
         if (suppressed) {
             messages.add(CohortMessage.warn("SUPPRESSED", "Groupe trop petit (" + headcount + " < "
@@ -174,6 +187,7 @@ public class CohortAggregateService {
                 access.individual() ? "INDIVIDUAL" : "AGGREGATE",
                 suppressed, settings.minGroupSize(),
                 matched.size(), excludedNoSalary, failed, nonConverged, benefitsAssumed, grossFromConfig,
+                benefitsNoneSelected, coverage, settings.minCoverage(),
                 ps.getId(), ps.getVersion(), ps.getFiscalYear(),
                 OffsetDateTime.now(), fx.summary(), fx.fx(),
                 change.type().name(), change.base().name(), ctx.workingDays(),
@@ -228,6 +242,11 @@ public class CohortAggregateService {
         if (row.benefitsAssumed()) {
             messages.add(CohortMessage.warn("BENEFITS_ASSUMED",
                     "Aucune configuration de paie pour cet employé : tous les avantages du jeu de paramètres sont appliqués."));
+        }
+        if (row.benefitsNoneSelected()) {
+            messages.add(CohortMessage.warn("BENEFITS_NONE_SELECTED",
+                    "La configuration de paie de cet employé ne sélectionne aucun avantage : il est calculé sans avantage,"
+                            + " ce qui augmente le brut nécessaire pour un net donné."));
         }
 
         accessLog("EMPLOYEE", req.paysId(), access, change, "employee=1",

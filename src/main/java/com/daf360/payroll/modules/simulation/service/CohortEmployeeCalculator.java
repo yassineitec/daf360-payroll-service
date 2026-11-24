@@ -119,14 +119,19 @@ public class CohortEmployeeCalculator {
         return e.contractType() != null && !e.contractType().isBlank() ? e.contractType() : "CDI";
     }
 
-    /** Benefits the engine applies for this employee (DEC5) and whether they were assumed. */
-    public record BenefitChoice(List<BenefitCatalogue> benefits, boolean assumed, List<String> codes) {}
+    /**
+     * Benefits the engine applies for this employee (DEC5), whether they were assumed (no
+     * configuration), and whether the configuration selects none at all (its list is NULL or
+     * empty — read as "no benefit", which the screen now flags; the reading itself is unchanged).
+     */
+    public record BenefitChoice(List<BenefitCatalogue> benefits, boolean assumed, List<String> codes,
+                                boolean noneSelected) {}
 
     public BenefitChoice benefitsFor(EngineContext ctx, EmployeePayrollConfig cfg) {
-        if (cfg == null) return new BenefitChoice(ctx.allBenefits(), true, null);
+        if (cfg == null) return new BenefitChoice(ctx.allBenefits(), true, null, false);
         List<String> codes = parseCodes(cfg.getSelectedBenefitCodes());
         return new BenefitChoice(ctx.allBenefits().stream()
-                .filter(b -> codes.contains(b.getBenefitCode())).toList(), false, codes);
+                .filter(b -> codes.contains(b.getBenefitCode())).toList(), false, codes, codes.isEmpty());
     }
 
     public EmployeeWhatIfRow compute(EngineContext ctx, HrEmployeeDto e, EmployeePayrollConfig cfg, Change change) {
@@ -171,7 +176,7 @@ public class CohortEmployeeCalculator {
                 deltaCost,
                 pct(deltaCost, cur.loadedCost()),
                 !(current.convergenceOk() && projected.convergenceOk()),
-                bc.assumed(), grossSource, married, children);
+                bc.assumed(), bc.noneSelected(), grossSource, married, children);
     }
 
     public PayrollResult fromNet(EngineContext ctx, BigDecimal net, List<BenefitCatalogue> benefits,

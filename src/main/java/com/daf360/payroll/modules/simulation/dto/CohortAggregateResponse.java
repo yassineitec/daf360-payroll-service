@@ -89,6 +89,22 @@ public record CohortAggregateResponse(
         /** Simulated employees whose current gross came from their payroll configuration (DEC6). */
         int grossFromConfig,
 
+        /**
+         * Simulated employees WITH a payroll configuration whose benefit list is NULL or empty:
+         * computed without any benefit (DEC5 reading, unchanged), which raises the gross needed
+         * for a given net. Message {@code BENEFITS_NONE_SELECTED}.
+         */
+        int benefitsNoneSelected,
+
+        /**
+         * {@code headcount ÷ matched}, 0–1 at scale 4; {@code null} when nothing matched. A ratio
+         * of counts, so returned even when the amounts are suppressed.
+         */
+        BigDecimal coverage,
+
+        /** {@code app.cohort.min-coverage}: below it, message {@code LOW_COVERAGE}. */
+        BigDecimal minCoverage,
+
         Long parameterSetId,
         Integer parameterSetVersion,
         Integer fiscalYear,

@@ -418,6 +418,144 @@ class CohortAggregateServiceTest {
         assertThat(r.salaryBase()).isEqualTo("NET");
     }
 
+    // ── Pre-merge 2a — configurations without any benefit selected ──────────────────────
+
+    /** G2 employees 4 and 5 get a configuration whose list is NULL and "[]"; 6, 7, 8 have none. */
+    private void configsWithoutBenefits() {
+        EmployeePayrollConfig nullList = new EmployeePayrollConfig();
+        nullList.setProfileUserId(4L);
+        nullList.setPaysId(TN);
+        nullList.setSelectedBenefitCodes(null);
+        EmployeePayrollConfig emptyList = new EmployeePayrollConfig();
+        emptyList.setProfileUserId(5L);
+        emptyList.setPaysId(TN);
+        emptyList.setSelectedBenefitCodes("[]");
+        EmployeePayrollConfig cfg2 = new EmployeePayrollConfig();
+        cfg2.setProfileUserId(2L);
+        cfg2.setPaysId(TN);
+        cfg2.setSelectedBenefitCodes("[\"BEN_T\"]");
+        when(configRepo.findByProfileUserIdIn(any())).thenReturn(List.of(cfg2, nullList, emptyList));
+        when(configRepo.findByProfileUserId(anyLong())).thenAnswer(i -> {
+            long id = i.getArgument(0);
+            return id == 2L ? Optional.of(cfg2) : id == 4L ? Optional.of(nullList)
+                    : id == 5L ? Optional.of(emptyList) : Optional.empty();
+        });
+    }
+
+    @Test
+    @DisplayName("2a: a configuration with a NULL or empty benefit list is counted and flagged, not assumed")
+    void benefitsNoneSelected_countedAndFlagged() {
+        configsWithoutBenefits();
+        CohortAggregateResponse r = service.aggregate(group("G2", "PERCENT", "5", null, true), INDIVIDUAL);
+        assertThat(r.benefitsNoneSelected()).isEqualTo(2);
+        assertThat(r.benefitsAssumed()).isEqualTo(3);
+        assertThat(r.messages()).anyMatch(m -> m.code().equals("BENEFITS_NONE_SELECTED") && m.level().equals("WARNING"));
+        EmployeeWhatIfRow four = r.employees().stream().filter(x -> x.profileUserId() == 4L).findFirst().orElseThrow();
+        EmployeeWhatIfRow six = r.employees().stream().filter(x -> x.profileUserId() == 6L).findFirst().orElseThrow();
+        assertThat(four.benefitsNoneSelected()).isTrue();
+        assertThat(four.benefitsAssumed()).isFalse();
+        assertThat(six.benefitsNoneSelected()).isFalse();
+    }
+
+    @Test
+    @DisplayName("2a: the flag changes nothing in the computation — still no benefit for a NULL list")
+    void benefitsNoneSelected_computationUnchanged() {
+        configsWithoutBenefits();
+        CohortAggregateResponse r = service.aggregate(group("G2", "PERCENT", "0", null, true), INDIVIDUAL);
+        EmployeeWhatIfRow four = r.employees().stream().filter(x -> x.profileUserId() == 4L).findFirst().orElseThrow();
+        PayrollSimulatorService.PayrollResult ref = simulator.computeFromNet(new BigDecimal("2600"), ps,
+                paramSets.loadRates(9L), List.of(), List.of(), "CDI", 22, false, 0);
+        assertSame(ref, four.current());
+        assertThat(four.current().grossWithBenefits()).isEqualByComparingTo(four.current().gross());
+    }
+
+    @Test
+    @DisplayName("2a: default fixture (only a config with a benefit selected) → 0 and no message")
+    void benefitsNoneSelected_zeroWhenEveryConfigSelectsOne() {
+        CohortAggregateResponse r = service.aggregate(group(null, "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.benefitsNoneSelected()).isZero();
+        assertThat(r.messages()).noneMatch(m -> m.code().equals("BENEFITS_NONE_SELECTED"));
+    }
+
+    @Test
+    @DisplayName("2a: one-employee what-if carries the same warning")
+    void benefitsNoneSelected_employee() {
+        configsWithoutBenefits();
+        EmployeeWhatIfResponse r = service.whatIfEmployee(
+                new EmployeeWhatIfRequest(TN, 4L, "PERCENT", new BigDecimal("5"), null), INDIVIDUAL);
+        assertThat(r.employee().benefitsNoneSelected()).isTrue();
+        assertThat(r.messages()).anyMatch(m -> m.code().equals("BENEFITS_NONE_SELECTED"));
+    }
+
+    // ── Pre-merge 2b — coverage ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("2b: coverage = headcount / matched; full group → 1, no LOW_COVERAGE")
+    void coverage_full() {
+        CohortAggregateResponse r = service.aggregate(group("G2", "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.matched()).isEqualTo(5);
+        assertThat(r.coverage()).isEqualByComparingTo("1");
+        assertThat(r.minCoverage()).isEqualByComparingTo("0.90");
+        assertThat(r.messages()).noneMatch(m -> m.code().equals("LOW_COVERAGE"));
+    }
+
+    @Test
+    @DisplayName("2b: 8 of 9 included (one without salary) → 0.8889 < 0.90 → LOW_COVERAGE, totals unchanged")
+    void coverage_low() {
+        CohortAggregateResponse r = service.aggregate(group(null, "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.headcount()).isEqualTo(8);
+        assertThat(r.matched()).isEqualTo(9);
+        assertThat(r.coverage()).isEqualByComparingTo("0.8889");
+        assertThat(r.messages()).anyMatch(m -> m.code().equals("LOW_COVERAGE") && m.level().equals("WARNING"));
+        assertThat(r.currentMonthlyCost()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("2b: threshold is inclusive — coverage equal to min-coverage is not low")
+    void coverage_thresholdInclusive() {
+        CohortAggregateService strict = new CohortAggregateService(hr, paramSets, new CohortEmployeeCalculator(simulator, om),
+                fxResolver(), configRepo, new CohortSettings(5, 22, new BigDecimal("0.05"), new BigDecimal("0.8889")));
+        CohortAggregateResponse r = strict.aggregate(group(null, "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.messages()).noneMatch(m -> m.code().equals("LOW_COVERAGE"));
+    }
+
+    @Test
+    @DisplayName("2b: nothing matched → coverage null, no LOW_COVERAGE")
+    void coverage_nullWhenNothingMatched() {
+        CohortAggregateResponse r = service.aggregate(group("NOPE", "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.matched()).isZero();
+        assertThat(r.coverage()).isNull();
+        assertThat(r.messages()).noneMatch(m -> m.code().equals("LOW_COVERAGE"));
+    }
+
+    @Test
+    @DisplayName("2b: nothing converges → coverage 0 and LOW_COVERAGE next to ALL_NON_CONVERGED")
+    void coverage_zeroWhenNothingConverges() {
+        ps.setMaxConvergenceIterations(1);
+        CohortAggregateResponse r = service.aggregate(group("G2", "PERCENT", "5", null, null), INDIVIDUAL);
+        assertThat(r.headcount()).isZero();
+        assertThat(r.coverage()).isEqualByComparingTo("0");
+        assertThat(r.messages()).anyMatch(m -> m.code().equals("LOW_COVERAGE"))
+                .anyMatch(m -> m.code().equals("ALL_NON_CONVERGED"));
+    }
+
+    @Test
+    @DisplayName("2b: a suppressed group still gets coverage (a ratio of counts) and no amount")
+    void coverage_suppressedGroup() {
+        CohortAggregateResponse r = service.aggregate(group("G1", "PERCENT", "5", null, null), AGGREGATE);
+        assertThat(r.suppressed()).isTrue();
+        assertThat(r.coverage()).isEqualByComparingTo("1");
+        assertThat(amountsOf(r)).allMatch(a -> a == null);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"-0.01", "1.01"})
+    @DisplayName("2b: app.cohort.min-coverage must be within 0..1")
+    void minCoverage_bounds(String v) {
+        assertThatThrownBy(() -> new CohortSettings(5, 22, new BigDecimal("0.05"), new BigDecimal(v)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────────────
 
     private IndividualSimulationService individualSimulator() {

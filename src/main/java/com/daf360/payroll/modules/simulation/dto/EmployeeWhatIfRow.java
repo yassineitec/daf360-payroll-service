@@ -22,6 +22,8 @@ public record EmployeeWhatIfRow(
         BigDecimal deltaLoadedCostPct,
         boolean nonConverged,
         boolean benefitsAssumed,
+        /** Has a payroll configuration whose benefit list is NULL or empty: computed without any benefit. */
+        boolean benefitsNoneSelected,
         String grossSource,
         Boolean married,
         Integer children
