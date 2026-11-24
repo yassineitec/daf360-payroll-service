@@ -1,5 +1,8 @@
 package com.daf360.payroll.modules.simulation.service;
 
+import com.daf360.payroll.security.PaysScopeGuard;
+import jakarta.persistence.EntityNotFoundException;
+
 import com.daf360.payroll.engine.FxSnapshotService;
 import com.daf360.payroll.engine.PayrollSimulatorService;
 import com.daf360.payroll.engine.TopologicalEvaluator;
@@ -33,19 +36,22 @@ public class CohortSimulationService {
     private final SimulationResultRepository resultRepo;
     private final CohortDefinitionRepository cohortRepo;
     private final ObjectMapper objectMapper;
+    private final PaysScopeGuard scopeGuard;
 
     public CohortSimulationService(ParameterSetService paramSetService,
                                     PayrollSimulatorService simulatorService,
                                     FxSnapshotService fxService,
                                     SimulationResultRepository resultRepo,
                                     CohortDefinitionRepository cohortRepo,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    PaysScopeGuard scopeGuard) {
         this.paramSetService = paramSetService;
         this.simulatorService = simulatorService;
         this.fxService = fxService;
         this.resultRepo = resultRepo;
         this.cohortRepo = cohortRepo;
         this.objectMapper = objectMapper;
+        this.scopeGuard = scopeGuard;
     }
 
     @Transactional
@@ -142,7 +148,12 @@ public class CohortSimulationService {
         return saved.stream().map(this::toDto).toList();
     }
 
+    /** A1 — the cohort's own country must be in the caller's scope (the id alone carries no
+     *  {@code paysId} for the interceptor to check). Unknown id → 404. */
     public List<SimulationResultDto> getByCohort(Long cohortId) {
+        CohortDefinition cohort = cohortRepo.findById(cohortId)
+                .orElseThrow(() -> new EntityNotFoundException("Cohorte introuvable : " + cohortId));
+        scopeGuard.requireInScope(cohort.getPaysId());
         return resultRepo.findByCohortId(cohortId).stream().map(this::toDto).toList();
     }
 
