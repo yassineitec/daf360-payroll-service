@@ -59,6 +59,48 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** The HR service could not be read: a cohort built on an empty workforce would be a
+     *  false "0" — say so instead (A3). */
+    @ExceptionHandler(com.daf360.payroll.modules.simulation.client.HrServiceUnavailableException.class)
+    public ProblemDetail handleHrUnavailable(com.daf360.payroll.modules.simulation.client.HrServiceUnavailableException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        pd.setTitle("Service RH indisponible");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /** Unreadable body — malformed JSON, or a value of the wrong type ("abc" for a number).
+     *  Was a 500 through the catch-all below (A4). The message names the field when Jackson
+     *  knows it, never the raw value. */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ProblemDetail handleUnreadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        String field = null;
+        if (ex.getCause() instanceof com.fasterxml.jackson.databind.JsonMappingException jme
+                && !jme.getPath().isEmpty()) {
+            field = jme.getPath().stream()
+                    .map(r -> r.getFieldName() != null ? r.getFieldName() : "[" + r.getIndex() + "]")
+                    .collect(Collectors.joining("."));
+        }
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setDetail(field != null
+                ? "Valeur invalide pour le champ « " + field + " »."
+                : "Corps de requête illisible (JSON invalide).");
+        if (field != null) pd.setProperty("field", field);
+        return pd;
+    }
+
+    /** Bean-validation failure (@NotNull, @Positive…) — a 400 with the offending fields,
+     *  instead of the generic 500 it fell into before (A4). */
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ProblemDetail handleInvalid(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+        String fields = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + " " + fe.getDefaultMessage())
+                .collect(Collectors.joining(" ; "));
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        pd.setDetail("Requête invalide : " + (fields.isEmpty() ? "données incorrectes" : fields) + ".");
+        return pd;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleBadRequest(IllegalArgumentException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);

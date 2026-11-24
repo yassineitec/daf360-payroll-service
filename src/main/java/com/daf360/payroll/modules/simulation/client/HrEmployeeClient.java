@@ -70,6 +70,37 @@ public class HrEmployeeClient {
     }
 
     /**
+     * Same list as {@link #fetchActiveEmployees}, but a failure is a failure: HR unreachable,
+     * a 401/403 on the internal key or an unreadable body throws
+     * {@link HrServiceUnavailableException} (→ 503) instead of returning an empty list that a
+     * cohort would report as "0 employees, cost 0" (A3, cohort hardening).
+     */
+    public List<HrEmployeeDto> fetchActiveEmployeesOrThrow(Long paysId) {
+        String url = appProperties.getHrApiBaseUrl()
+                + "/api/hr/internal/payroll-sync/employees?paysId=" + paysId;
+        byte[] body;
+        try {
+            body = restClient.get()
+                    .uri(url)
+                    .header("X-Internal-Key", appProperties.getHrInternalApiKey())
+                    .retrieve()
+                    .body(byte[].class);
+        } catch (RestClientException ex) {
+            log.warn("HR employee sync failed for paysId={}: {}", paysId, ex.getClass().getSimpleName());
+            throw new HrServiceUnavailableException(
+                    "Le service RH est injoignable ou a refusé l'accès : la liste des employés n'a pas pu être lue. "
+                    + "Aucun chiffre n'est calculé. Réessayez plus tard ou contactez l'administrateur.", ex);
+        }
+        if (body == null || body.length == 0) return List.of();
+        try {
+            return objectMapper.readValue(body, new TypeReference<>() {});
+        } catch (Exception ex) {
+            throw new HrServiceUnavailableException(
+                    "Le service RH a renvoyé une réponse illisible : la liste des employés n'a pas pu être lue.", ex);
+        }
+    }
+
+    /**
      * Fetches a single employee's payroll-relevant profile by userId.
      * Returns empty if the employee is not found or the HR service is unavailable.
      * Used by IndividualSimulationService to hydrate simulation context (C4), and by
