@@ -96,9 +96,12 @@ public class ResultPersister {
         // Taxes (IRPP/CSS/INCOME_TAX) are strate 5 by construction — STRATE_4 is the new
         // intermediate assiette they read, never itself a payable amount.
         BigDecimal taxes = nvl(ctx.getVariable("STRATE_5"));
+        // Strate-5 RETENUE lines (salary-advance instalment…): withheld from the net to pay,
+        // never part of the taxes — see SystemVariableAggregator.
+        BigDecimal retenuesNet = nvl(ctx.getVariable(SystemVariableAggregator.RETENUES_NET));
 
         result.setAggregateGross(gross);
-        result.setAggregateNet(gross.subtract(employeeCharges).subtract(taxes));
+        result.setAggregateNet(gross.subtract(employeeCharges).subtract(taxes).subtract(retenuesNet));
         result.setAggregateEmployerCharges(employerCharges);
         result.setAggregateIrpp(ctx.getVariable("IRPP"));
         result.setLoadedCost(gross.add(employerCharges));
@@ -110,6 +113,21 @@ public class ResultPersister {
         }
 
         return result;
+    }
+
+    /** The single INSERT of a result assembled by {@link #build} (plus its variable-inputs snapshot). */
+    public PayrollResult save(PayrollResult result) {
+        return resultRepo.save(result);
+    }
+
+    /** JSON of a snapshot (variable inputs); null stays null, a serialisation failure too. */
+    public String toJson(Object snapshot) {
+        if (snapshot == null) return null;
+        try {
+            return objectMapper.writeValueAsString(snapshot);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private BigDecimal sumByNatureAndPayer(List<RubriqueResultItem> items, String nature, String payer) {

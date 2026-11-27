@@ -62,13 +62,19 @@ public class EngineConfigService {
      * Variables toujours présentes au calcul (ContextLoader, SystemVariableAggregator,
      * charges injectées par l'orchestrateur, SELF du calcul inverse).
      */
-    private static final Set<String> SYSTEM_VARIABLES = Set.of(
-            "JOURS_OUVRES", "MOIS", "ANNEE",
-            "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
-            "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "SELF",
-            // Seeded by PayrollOrchestrator#applyEmployeeBaseSalary from the employee's
-            // own employee_payroll_config row — see 2026-11-06-engine-run-irpp-css-net-fix.
-            "IS_MARRIED", "CHILDREN_COUNT");
+    private static final Set<String> SYSTEM_VARIABLES = java.util.stream.Stream.concat(
+            java.util.stream.Stream.of(
+                "JOURS_OUVRES", "MOIS", "ANNEE",
+                "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
+                "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "SELF",
+                // Seeded by PayrollOrchestrator#applyEmployeeBaseSalary from the employee's
+                // own employee_payroll_config row — see 2026-11-06-engine-run-irpp-css-net-fix.
+                "IS_MARRIED", "CHILDREN_COUNT",
+                // Strate-5 deductions withheld from the net (SystemVariableAggregator).
+                "RETENUES_NET"),
+            // Éléments variables du mois (V41), always defined by the orchestrator.
+            com.daf360.payroll.modules.payroll.variable.PayrollVariableInputsService.VARIABLES.stream())
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
     /** Noms en majuscules d'une formule, hors appels de méthode (T(…), .max(…)). */
     private static final Pattern FORMULA_NAME = Pattern.compile("(?<![\\w.])([A-Z][A-Z0-9_]*)\\b(?!\\s*\\()");

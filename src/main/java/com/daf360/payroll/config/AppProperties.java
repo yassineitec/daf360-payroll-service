@@ -22,6 +22,14 @@ public class AppProperties {
      * HrEmployeeClient).
      */
     private String hrInternalApiKey = "";
+    /**
+     * Timesheet backend base URL INCLUDING its context path (/api/v1), e.g.
+     * http://timesheet-backend:8090/api/v1. The payroll run reads approved hours per day from
+     * {@code /internal/payroll/daily-hours} with the same X-Internal-Key as RH
+     * ({@link #hrInternalApiKey}). Blank = no weekend overtime from the timesheet (the payslip
+     * says so instead of failing).
+     */
+    private String timesheetApiBaseUrl = "";
     /** The X-Internal-Key this service checks on /api/payroll/internal/**. Blank disables them. */
     private String internalApiKey = "";
     private String pdfServiceUrl   = "http://localhost:3000";

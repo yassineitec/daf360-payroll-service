@@ -21,11 +21,14 @@ public class SequenceValidator {
      * System variable names that are always available in context: run start (ContextLoader)
      * and strate totals refreshed after each rubrique (SystemVariableAggregator).
      */
-    private static final Set<String> SYSTEM_VARS = Set.of(
-        "JOURS_OUVRES", "MOIS", "ANNEE",
-        "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
-        "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER"
-    );
+    private static final Set<String> SYSTEM_VARS = java.util.stream.Stream.concat(
+        java.util.stream.Stream.of(
+            "JOURS_OUVRES", "MOIS", "ANNEE",
+            "STRATE_1", "STRATE_2", "STRATE_3", "STRATE_4", "STRATE_5",
+            "BRUT", "AVANTAGES", "CHARGES_SAL", "NET_IMPOSABLE", "NET_A_PAYER", "RETENUES_NET"),
+        // Éléments variables du mois (V41) — set by the orchestrator before the first rubrique.
+        com.daf360.payroll.modules.payroll.variable.PayrollVariableInputsService.VARIABLES.stream())
+        .collect(Collectors.toUnmodifiableSet());
 
     public void validate(List<PayrollRubriqueDef> rubriques) {
         Set<String> resolved = new HashSet<>(SYSTEM_VARS);

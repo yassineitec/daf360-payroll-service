@@ -98,6 +98,9 @@ app:
   # Same value as rh-service's INTERNAL_API_KEY — every HR-calling client in this service
   # (salary advances, employee-profile sync) is refused without it.
   hr-internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}
+  # Timesheet backend INCLUDING /api/v1 — the payroll run reads approved hours per day there
+  # (weekend overtime). Same X-Internal-Key as above. Blank = no overtime from the timesheet.
+  timesheet-api-base-url: ${TIMESHEET_API_BASE_URL:}
   # The X-Internal-Key other services send to /api/payroll/internal/** (facturation's P&L
   # workbook reads the monthly headcount). Same shared secret; blank = those endpoints 403.
   internal-api-key: ${INTERNAL_API_KEY:daf360-internal-change-me}

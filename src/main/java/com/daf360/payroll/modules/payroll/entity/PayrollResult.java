@@ -76,6 +76,14 @@ public class PayrollResult {
     @Column(name = "forex_snapshot_json", columnDefinition = "NVARCHAR(MAX)")
     private String forexSnapshotJson;
 
+    /**
+     * The month's « éléments variables » exactly as the run used them (V41) — weekend
+     * overtime per day, absences, autorisations, bonuses, advance instalments, rates and
+     * warnings. JSON of {@code PayrollVariableInputs}; null on results calculated before V41.
+     */
+    @Column(name = "variable_inputs_json", columnDefinition = "NVARCHAR(MAX)")
+    private String variableInputsJson;
+
     @Column(name = "convergence_ok", nullable = false)
     private boolean convergenceOk = true;
 

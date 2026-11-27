@@ -16,6 +16,8 @@ import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import com.daf360.payroll.modules.payroll.entity.PayrollRubriqueDef;
 import com.daf360.payroll.modules.payroll.repository.PayrollCountryRepository;
 import com.daf360.payroll.modules.payroll.repository.PayrollRubriqueDefRepository;
+import com.daf360.payroll.modules.payroll.variable.PayrollVariableInputs;
+import com.daf360.payroll.modules.payroll.variable.PayrollVariableInputsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -57,6 +59,8 @@ public class PayrollOrchestrator {
     private final ParameterSetService parameterSetService;
     private final EmployeePayrollConfigRepository employeeConfigRepo;
     private final EmployeeFamilyResolver familyResolver;
+    /** Null only in unit tests built with the short constructor: no variable elements then. */
+    private final PayrollVariableInputsService variableInputsService;
 
     public PayrollOrchestrator(ContextLoader contextLoader,
                                 SequenceValidator sequenceValidator,
@@ -70,6 +74,25 @@ public class PayrollOrchestrator {
                                 ParameterSetService parameterSetService,
                                 EmployeePayrollConfigRepository employeeConfigRepo,
                                 EmployeeFamilyResolver familyResolver) {
+        this(contextLoader, sequenceValidator, dispatcher, aggregator, persister, forexService, rubriqueRepo,
+             countryRepo, topologicalEvaluator, parameterSetService, employeeConfigRepo, familyResolver, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PayrollOrchestrator(ContextLoader contextLoader,
+                                SequenceValidator sequenceValidator,
+                                CalculationDispatcher dispatcher,
+                                SystemVariableAggregator aggregator,
+                                ResultPersister persister,
+                                ForexSnapshotService forexService,
+                                PayrollRubriqueDefRepository rubriqueRepo,
+                                PayrollCountryRepository countryRepo,
+                                TopologicalEvaluator topologicalEvaluator,
+                                ParameterSetService parameterSetService,
+                                EmployeePayrollConfigRepository employeeConfigRepo,
+                                EmployeeFamilyResolver familyResolver,
+                                PayrollVariableInputsService variableInputsService) {
+        this.variableInputsService = variableInputsService;
         this.contextLoader = contextLoader;
         this.sequenceValidator = sequenceValidator;
         this.dispatcher = dispatcher;
@@ -86,22 +109,29 @@ public class PayrollOrchestrator {
 
     /** Everything one calculation produced, before (or instead of) persisting it. */
     private record Computation(ExecutionContext ctx, List<RubriqueResultItem> results, Long paramSetId,
-                               boolean convergenceOk, int totalIterations) {
+                               boolean convergenceOk, int totalIterations,
+                               PayrollVariableInputs variableInputs) {
         Integer iterationsOrNull() { return totalIterations > 0 ? totalIterations : null; }
     }
 
-    /** A real payroll run: computes, then INSERTs an immutable {@code payroll_results} row. */
+    /**
+     * A real payroll run: computes WITH the month's variable elements (weekend overtime,
+     * absences, autorisations, bonuses, advance instalments), then INSERTs an immutable
+     * {@code payroll_results} row carrying their snapshot.
+     */
     @Transactional
     public RunPayrollResponse run(RunPayrollRequest request) {
-        Computation c = compute(request, null);
+        Computation c = compute(request, null, true);
 
         // 5. Persist result — all fields set before the single INSERT; no UPDATE follows
-        PayrollResult saved = persister.persist(
+        PayrollResult toSave = persister.build(
             c.ctx(), c.results(), c.paramSetId(),
             request.getTriggeredBy(),
             c.convergenceOk(),
             c.iterationsOrNull()
         );
+        toSave.setVariableInputsJson(persister.toJson(c.variableInputs()));
+        PayrollResult saved = persister.save(toSave);
 
         // 7. Persist forex snapshots — fire-and-forget; don't fail the run if forex fails
         try {
@@ -125,10 +155,27 @@ public class PayrollOrchestrator {
         if (grossSalary == null || grossSalary.signum() <= 0) {
             throw new IllegalArgumentException("Le salaire brut doit être strictement positif.");
         }
-        Computation c = compute(request, grossSalary);
+        // A configuration's net is a standard month: no overtime, absence or advance of any
+        // particular month enters it (variable elements forced to 0).
+        Computation c = compute(request, grossSalary, false);
         PayrollResult unsaved = persister.build(
             c.ctx(), c.results(), c.paramSetId(), request.getTriggeredBy(),
             c.convergenceOk(), c.iterationsOrNull());
+        return toResponse(unsaved, c);
+    }
+
+    /**
+     * Exactly what {@link #run} would compute — saved salary AND the month's variable
+     * elements — with NOTHING written. Backs the « Calculer la paie » pop-up's preview, so the
+     * user sees the overtime, absences and deductions before launching. {@code resultId} null.
+     */
+    @Transactional(readOnly = true)
+    public RunPayrollResponse dryRun(RunPayrollRequest request) {
+        Computation c = compute(request, null, true);
+        PayrollResult unsaved = persister.build(
+            c.ctx(), c.results(), c.paramSetId(), request.getTriggeredBy(),
+            c.convergenceOk(), c.iterationsOrNull());
+        unsaved.setVariableInputsJson(persister.toJson(c.variableInputs()));
         return toResponse(unsaved, c);
     }
 
@@ -137,7 +184,7 @@ public class PayrollOrchestrator {
      *                      base salary and must exist, be for this country and carry a gross.
      *                      Non-null = a preview with that (working-currency) base salary.
      */
-    private Computation compute(RunPayrollRequest request, BigDecimal grossOverride) {
+    private Computation compute(RunPayrollRequest request, BigDecimal grossOverride, boolean withVariableInputs) {
         EmployeePayrollConfig config = request.getEmployeeId() == null ? null
             : employeeConfigRepo.findByProfileUserId(request.getEmployeeId()).orElse(null);
 
@@ -169,6 +216,23 @@ public class PayrollOrchestrator {
         //     montant unique du jeu de paramètres — voir applyEmployeeInputs.
         applyEmployeeInputs(ctx, rubriques, request.getEmployeeId(), config, grossOverride);
 
+        // 3c. Éléments variables du mois (V41) — heures sup. de week-end, absences non payées,
+        //     entrée/sortie en cours de mois, autorisations hors quota, primes, avances. Every
+        //     variable the V41 rubriques read is always defined (0 when not applicable), so a
+        //     formula never fails on an unknown name.
+        PayrollVariableInputs variableInputs = null;
+        if (withVariableInputs && variableInputsService != null && request.getEmployeeId() != null) {
+            BigDecimal monthlyGross = grossOverride != null ? grossOverride
+                : config != null ? config.getCurrentGrossSalary() : null;
+            variableInputs = variableInputsService.gather(
+                request.getEmployeeId(), request.getPaysId(),
+                request.getPeriodYear(), request.getPeriodMonth(),
+                monthlyGross, ctx.getParameters(), country.getCurrencyCode());
+            variableInputsService.applyTo(ctx, variableInputs);
+        } else {
+            PayrollVariableInputsService.VARIABLES.forEach(v -> ctx.putVariable(v, BigDecimal.ZERO));
+        }
+
         // 4. Execute each rubrique in order
         List<RubriqueResultItem> results = new ArrayList<>();
         boolean convergenceOk = true;
@@ -188,6 +252,13 @@ public class PayrollOrchestrator {
 
             BigDecimal amount = dispatcher.dispatch(rubrique, ctx);
             ctx.putVariable(rubrique.getCode(), amount);
+
+            // A variable element that is 0 this month (no overtime, no advance…) stays off
+            // the payslip; its variable is still defined above for later formulas.
+            if (amount.signum() == 0 && PayrollVariableInputsService.readsVariableElement(
+                    rubrique.getFormulaExpression(), rubrique.getAssietteCode())) {
+                continue;
+            }
 
             RubriqueResultItem item = RubriqueResultItem.builder()
                 .rubriqueCode(rubrique.getCode())
@@ -216,7 +287,7 @@ public class PayrollOrchestrator {
             injectChargeVariables(ctx, request.getPaysId(), contractType, joursTravailes);
         }
 
-        return new Computation(ctx, results, paramSetId, convergenceOk, totalIterations);
+        return new Computation(ctx, results, paramSetId, convergenceOk, totalIterations, variableInputs);
     }
 
     /** Response of a run or a preview (charges déjà injectées à l'étape 4b si besoin). */
@@ -244,6 +315,8 @@ public class PayrollOrchestrator {
             .iterationsUsed(totalIterations > 0 ? totalIterations : null)
             .calculatedAt(saved.getCalculatedAt())
             .rubriqueDetails(results)
+            .variableInputs(c.variableInputs())
+            .variableInputsJson(saved.getVariableInputsJson())
             .build();
     }
 

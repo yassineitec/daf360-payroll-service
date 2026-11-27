@@ -30,4 +30,25 @@ public interface SalaryAdvanceInstallmentRepository extends JpaRepository<Salary
             ORDER BY a.profileUserId, i.seq
             """)
     List<SalaryAdvanceInstallment> findDueIn(@Param("year") int year, @Param("month") int month);
+
+    /**
+     * One employee's instalments withheld from a given month's pay: PLANNED or already ticked
+     * DEDUCTED (a re-run of the month must withhold the same amount), on an advance being
+     * repaid — or just REPAID by this very instalment. SKIPPED/WAIVED lines cost nothing.
+     * Returned as (instalment, advance currency) rows.
+     */
+    @Query("""
+            SELECT i, a.currency FROM SalaryAdvanceInstallment i, SalaryAdvance a
+            WHERE a.id = i.salaryAdvanceId
+              AND a.profileUserId = :userId
+              AND i.periodYear = :year AND i.periodMonth = :month
+              AND i.status IN (com.daf360.payroll.modules.salaryadvance.entity.InstallmentStatus.PLANNED,
+                               com.daf360.payroll.modules.salaryadvance.entity.InstallmentStatus.DEDUCTED)
+              AND a.status IN (com.daf360.payroll.modules.salaryadvance.entity.SalaryAdvanceStatus.REPAYING,
+                               com.daf360.payroll.modules.salaryadvance.entity.SalaryAdvanceStatus.REPAID)
+            ORDER BY i.salaryAdvanceId, i.seq
+            """)
+    List<Object[]> findWithheldFromPay(@Param("userId") Long userId,
+                                       @Param("year") int year,
+                                       @Param("month") int month);
 }

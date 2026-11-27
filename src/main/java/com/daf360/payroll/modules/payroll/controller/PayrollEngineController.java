@@ -79,6 +79,17 @@ public class PayrollEngineController {
     }
 
     /**
+     * Same calculation as {@code /run} — saved salary and the month's variable elements
+     * (weekend overtime, absences, autorisations, bonuses, advance instalments) — with nothing
+     * written: the « Calculer la paie » pop-up shows it before the user launches the run.
+     */
+    @PostMapping("/run/preview")
+    @PreAuthorize("hasAuthority('" + PermissionCatalog.RUN_ENGINE + "')")
+    public RunPayrollResponse runPreview(@RequestBody @Valid RunPayrollRequest request) {
+        return orchestrator.dryRun(request);
+    }
+
+    /**
      * Totals of the latest calculated period for one country (gross, net, loaded cost,
      * convergence failures). Declared before {@code /results/{employeeId}} for
      * readability only — Spring already prefers the literal segment over the variable.

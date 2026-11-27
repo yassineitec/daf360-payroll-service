@@ -76,4 +76,10 @@ public class RunPayrollResponse {
 
     /** Full line-by-line rubrique details in strate + displayOrder sequence. */
     private List<RubriqueResultItem> rubriqueDetails;
+
+    /** The month's variable elements the run used; null for a « Calculer le net » preview. */
+    private com.daf360.payroll.modules.payroll.variable.PayrollVariableInputs variableInputs;
+
+    /** Same, as stored on the result row (the payslip history reads this column). */
+    private String variableInputsJson;
 }
