@@ -71,6 +71,21 @@ public class HrPayrollInputsClient {
         }
     }
 
+    /** Weekend days of a country, RH roles and (with userId) the employee's country and role. */
+    public Optional<SettingsRef> settingsRef(Long paysId, Long userId) {
+        StringBuilder url = new StringBuilder(appProperties.getHrApiBaseUrl()).append("/api/hr/internal/payroll-settings-ref?");
+        if (paysId != null) url.append("paysId=").append(paysId).append('&');
+        if (userId != null) url.append("userId=").append(userId);
+        try {
+            byte[] body = get(url.toString());
+            if (body == null || body.length == 0) return Optional.empty();
+            return Optional.of(objectMapper.readValue(body, SettingsRef.class));
+        } catch (Exception ex) {
+            log.warn("HR payroll settings reference unavailable (paysId={}, userId={}): {}", paysId, userId, ex.getMessage());
+            return Optional.empty();
+        }
+    }
+
     private byte[] get(String url) {
         return restClient.get()
                 .uri(url)
@@ -99,7 +114,22 @@ public class HrPayrollInputsClient {
             List<AbsenceLine> absences,
             int autorisationMinutes,
             Integer autorisationMonthlyQuotaMinutes,
-            List<BalanceLine> balances
+            List<BalanceLine> balances,
+            /** RH role (Users.role_id) — for the daily overtime cap per role. */
+            Long roleId,
+            String roleLabel
+    ) {}
+
+    public record RoleRef(long id, String labelFr, String labelEn) {}
+
+    /** Mirrors rh-service's InternalPayrollInputsController.SettingsRef. */
+    public record SettingsRef(
+            Long paysId,
+            List<String> weekendDays,
+            List<RoleRef> roles,
+            Long userId,
+            Long employeePaysId,
+            Long employeeRoleId
     ) {}
 
     public record AbsenceLine(

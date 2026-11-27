@@ -5,6 +5,7 @@ import com.daf360.payroll.modules.admin.dto.SaveEngineRubriqueRequest;
 import com.daf360.payroll.modules.payroll.entity.PayrollCountry;
 import com.daf360.payroll.modules.payroll.entity.PayrollParamSet;
 import com.daf360.payroll.modules.payroll.entity.PayrollRubriqueDef;
+import com.daf360.payroll.modules.payroll.orchestrator.PayrollOrchestrator;
 import com.daf360.payroll.modules.payroll.repository.PayrollCountryRepository;
 import com.daf360.payroll.modules.payroll.repository.PayrollParamSetRepository;
 import com.daf360.payroll.modules.payroll.repository.PayrollRubriqueDefRepository;
@@ -310,9 +311,18 @@ public class EngineConfigService {
             // JSON illisible : toutes les clés manquent.
         }
         Set<String> missing = new TreeSet<>();
-        for (PayrollRubriqueDef r : rubriqueRepo.findByCountryIdAndActiveTrue(countryId)) {
+        List<PayrollRubriqueDef> active = rubriqueRepo.findByCountryIdOrderByDisplayOrderAscCodeAsc(countryId).stream()
+                .filter(PayrollRubriqueDef::isActive).toList();
+        // The base-salary line's amount key is filled by every run with the employee's own gross
+        // (PayrollOrchestrator.applyEmployeeInputs): a version does not need to hold it
+        // (salaire_base_tn & co. were a single country-wide amount nobody uses any more).
+        String baseKey = PayrollOrchestrator.baseSalaryRubrique(active)
+                .map(PayrollRubriqueDef::getParamKeyTaux).orElse(null);
+        for (PayrollRubriqueDef r : active) {
             for (String k : new String[] { r.getParamKeyTaux(), r.getParamKeyPlafond(), r.getParamKeyBareme() }) {
-                if (k != null && !k.isBlank() && !present.contains(k)) missing.add(k);
+                if (k == null || k.isBlank() || k.equals(baseKey)) continue;
+                boolean has = present.contains(k) || present.stream().anyMatch(p -> p.equalsIgnoreCase(k));
+                if (!has) missing.add(k);
             }
         }
         return missing;

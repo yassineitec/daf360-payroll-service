@@ -9,6 +9,7 @@ import com.daf360.payroll.common.export.XlsxExport.RowFormat;
 import com.daf360.payroll.common.export.XlsxExport.SheetData;
 import com.daf360.payroll.modules.payroll.entity.PayrollResult;
 import com.daf360.payroll.modules.payroll.repository.PayrollResultRepository;
+import com.daf360.payroll.modules.payroll.variable.PayrollVariableInputs;
 import com.daf360.payroll.modules.ref.service.UserContextService;
 import com.daf360.payroll.security.PaysScopeContext;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -93,7 +94,17 @@ public class PayrollResultExportService {
                 l.rubriqueCode(), label(l, lang), "S" + l.strate(), lang.label(NATURES, l.nature()),
                 l.assiette(), signed(l), lang.label(MODES, l.modeCalcul()))).toList();
 
-        byte[] bytes = XlsxExport.write(List.of(new SheetData(lang.pick("Rubriques", "Pay items"), headers(lang), rows)));
+        // Same content as the payslip page: the pay items, then (results with a V41/V42 snapshot)
+        // the variable elements of the period and the leave balances, each on its own sheet.
+        List<SheetData> sheets = new ArrayList<>();
+        sheets.add(new SheetData(lang.pick("Rubriques", "Pay items"), headers(lang), rows));
+        PayrollVariableInputs vi = VariableInputsExport.read(objectMapper, r);
+        if (vi != null) {
+            sheets.add(VariableInputsExport.variableSheet(vi, lang));
+            SheetData balances = VariableInputsExport.balancesSheet(vi, lang);
+            if (balances != null) sheets.add(balances);
+        }
+        byte[] bytes = XlsxExport.write(sheets);
         return ExportFile.xlsx(filename(r, "xlsx"), bytes);
     }
 
@@ -123,7 +134,7 @@ public class PayrollResultExportService {
                     period(r, lang),
                     own.size() + (own.size() == 1 ? lang.pick(" rubrique", " pay item") : lang.pick(" rubriques", " pay items")),
                     null, null, null, null,
-                    historyGross(r), r.getStrate3(), historyIrpp(r), netOf(r), calculatedOn(r)));
+                    historyGross(r), r.getStrate3(), historyIrpp(r), advancesOf(r), netOf(r), calculatedOn(r)));
             formats.add(PERIOD_ROW);
             for (Line l : own) {
                 rows.add(Arrays.<Object>asList(
@@ -131,7 +142,7 @@ public class PayrollResultExportService {
                         (l.rubriqueCode() != null ? l.rubriqueCode() + " — " : "") + label(l, lang),
                         "S" + l.strate(), lang.label(NATURES, l.nature()),
                         l.assiette(), signed(l),
-                        null, null, null, null, null));
+                        null, null, null, null, null, null));
                 formats.add(RUBRIQUE_ROW);
             }
         }
@@ -149,7 +160,17 @@ public class PayrollResultExportService {
                 lang.pick("Strate", "Tier"), "Nature",
                 lang.pick("Assiette", "Base"), lang.pick("Montant", "Amount"),
                 lang.pick("Brut", "Gross"), lang.pick("CNSS salariale", "Employee CNSS"), "IRPP",
+                lang.pick("Avances (sur le net)", "Advances (from net)"),
                 lang.pick("Net à payer", "Net pay"), lang.pick("Calculé le", "Calculated on"));
+    }
+
+    /**
+     * Salary-advance instalments withheld from the net of that month (V41 snapshot) — what
+     * separates « Brut − CNSS − IRPP » from the net. Null before V41 (no snapshot).
+     */
+    private BigDecimal advancesOf(PayrollResult r) {
+        PayrollVariableInputs vi = VariableInputsExport.read(objectMapper, r);
+        return vi == null ? null : nz(vi.advancesTotal());
     }
 
     /** Même historique en PDF (pdf-service) ; {@code employeeName} = nom affiché dans l'en-tête. */
@@ -165,29 +186,34 @@ public class PayrollResultExportService {
         StringBuilder head = new StringBuilder();
         List<String> headers = historyHeaders(lang);
         for (int i = 0; i < headers.size(); i++) {
-            head.append(i >= 1 && i <= 4 ? "<th class=\"num\">" : "<th>").append(escape(headers.get(i))).append("</th>");
+            head.append(i >= 1 && i <= 5 ? "<th class=\"num\">" : "<th>").append(escape(headers.get(i))).append("</th>");
         }
         StringBuilder body = new StringBuilder();
-        BigDecimal tGross = BigDecimal.ZERO, tCnss = BigDecimal.ZERO, tIrpp = BigDecimal.ZERO, tNet = BigDecimal.ZERO;
+        BigDecimal tGross = BigDecimal.ZERO, tCnss = BigDecimal.ZERO, tIrpp = BigDecimal.ZERO,
+                   tAdv = BigDecimal.ZERO, tNet = BigDecimal.ZERO;
         for (PayrollResult r : results) {
             BigDecimal gross = historyGross(r), cnss = nz(r.getStrate3()), irpp = nz(historyIrpp(r)), net = nz(netOf(r));
+            BigDecimal adv = advancesOf(r);
             tGross = tGross.add(gross); tCnss = tCnss.add(cnss); tIrpp = tIrpp.add(irpp); tNet = tNet.add(net);
+            tAdv = tAdv.add(nz(adv));
             String calc = calculatedOn(r);
             body.append("<tr><td>").append(escape(period(r, lang))).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, gross)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, cnss)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, irpp)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, adv)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, net)).append("</td>")
                 .append("<td>").append(calc != null ? calc : "—").append("</td></tr>");
         }
         if (results.isEmpty()) {
-            body.append("<tr><td colspan=\"6\" class=\"empty\">")
+            body.append("<tr><td colspan=\"7\" class=\"empty\">")
                 .append(lang.pick("Aucun résultat de paie.", "No payroll result.")).append("</td></tr>");
         } else {
             body.append("<tr class=\"total\"><td>").append(lang.pick("Total", "Total")).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, tGross)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, tCnss)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, tIrpp)).append("</td>")
+                .append("<td class=\"num\">").append(fmt(money, tAdv)).append("</td>")
                 .append("<td class=\"num\">").append(fmt(money, tNet)).append("</td><td></td></tr>");
         }
 
@@ -246,6 +272,7 @@ public class PayrollResultExportService {
         return List.of(
                 lang.pick("Période", "Period"), lang.pick("Brut", "Gross"),
                 lang.pick("CNSS salariale", "Employee CNSS"), "IRPP",
+                lang.pick("Avances (sur le net)", "Advances (from net)"),
                 lang.pick("Net à payer", "Net pay"), lang.pick("Calculé le", "Calculated on"));
     }
 
@@ -294,6 +321,18 @@ public class PayrollResultExportService {
         BigDecimal cnss  = nz(r.getStrate3());
         BigDecimal irpp  = r.getAggregateIrpp() != null ? r.getAggregateIrpp() : nz(r.getStrate4());
         BigDecimal net   = nz(netOf(r));
+
+        // Variable elements (V41/V42 snapshot): period + leave balances under the summary, the
+        // advance instalments as their own tile (taken from the net), the detail after the table.
+        PayrollVariableInputs vi = VariableInputsExport.read(objectMapper, r);
+        DecimalFormat qty = quantity(lang);
+        BigDecimal advances = vi != null && vi.advancesTotal() != null ? vi.advancesTotal() : BigDecimal.ZERO;
+        String advanceTile = advances.signum() > 0
+                ? "<div class=\"tile\"><div class=\"k\">" + escape(lang.pick("Avance sur salaire (sur le net)", "Salary advance (from net)"))
+                  + "</div><div class=\"v neg\">− " + fmt(money, advances) + "</div></div>"
+                : "";
+        String top = VariableInputsExport.pdfTop(vi, lang, qty);
+        String variable = VariableInputsExport.pdfVariable(vi, lang, money, qty);
 
         StringBuilder body = new StringBuilder();
         for (Line l : lines) {
@@ -348,6 +387,7 @@ public class PayrollResultExportService {
                   .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
                   .neg { color: #b91c1c; }
                   .empty { text-align: center; color: #5f6368; padding: 16px; }
+                %s
                 </style>
                 </head>
                 <body>
@@ -357,26 +397,33 @@ public class PayrollResultExportService {
                   <div class="tile"><div class="k">%s</div><div class="v">%s</div></div>
                   <div class="tile"><div class="k">%s</div><div class="v neg">− %s</div></div>
                   <div class="tile"><div class="k">IRPP</div><div class="v neg">− %s</div></div>
+                  %s
                   <div class="tile net"><div class="k">%s</div><div class="v">%s</div></div>
                 </div>
+                %s
                 <h2>%s</h2>
                 <table>
                   <thead><tr>%s</tr></thead>
                   <tbody>%s</tbody>
                 </table>
+                %s
                 </body>
                 </html>
                 """.formatted(
                 lang == ExportLang.EN ? "en" : "fr",
                 escape(title),
+                VariableInputsExport.PDF_CSS,
                 escape(title), convergence,
                 who, lang.pick("Résultat n°", "Result #"), r.getId(), lang.pick("calculé le", "calculated on"), calculated,
                 lang.pick("Salaire brut", "Gross salary"), fmt(money, gross),
                 lang.pick("Charges salariales (CNSS)", "Employee contributions (CNSS)"), fmt(money, cnss),
                 fmt(money, irpp),
+                advanceTile,
                 lang.pick("Net à payer", "Net pay"), fmt(money, net),
+                top,
                 lang.pick("Détail par rubrique", "Breakdown by pay item"),
-                head, body);
+                head, body,
+                variable);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -438,6 +485,13 @@ public class PayrollResultExportService {
         DecimalFormatSymbols s = DecimalFormatSymbols.getInstance(lang.locale());
         if (lang == ExportLang.FR) s.setGroupingSeparator(' ');
         return new DecimalFormat("#,##0.00", s);
+    }
+
+    /** Hours / days / minutes: up to 2 decimals, no trailing zeros. */
+    private static DecimalFormat quantity(ExportLang lang) {
+        DecimalFormatSymbols s = DecimalFormatSymbols.getInstance(lang.locale());
+        if (lang == ExportLang.FR) s.setGroupingSeparator(' ');
+        return new DecimalFormat("#,##0.##", s);
     }
 
     private static String fmt(DecimalFormat f, BigDecimal v) {

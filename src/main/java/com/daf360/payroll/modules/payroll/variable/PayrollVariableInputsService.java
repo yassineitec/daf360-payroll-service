@@ -3,6 +3,7 @@ package com.daf360.payroll.modules.payroll.variable;
 import com.daf360.payroll.modules.employeeconfig.entity.EmployeePayrollBonus;
 import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollBonusRepository;
 import com.daf360.payroll.modules.payroll.calculator.ExecutionContext;
+import com.daf360.payroll.modules.payroll.leavesettings.OvertimeSettingsService;
 import com.daf360.payroll.modules.payroll.leavesettings.PayrollLeaveSettingsService;
 import com.daf360.payroll.modules.ref.service.FxEntryConversionService;
 import com.daf360.payroll.modules.salaryadvance.entity.SalaryAdvanceInstallment;
@@ -61,19 +62,18 @@ import java.util.Set;
 @Service
 public class PayrollVariableInputsService {
 
-    /** Majoration of weekend overtime, in % — a parameter of the country's active parameter set. */
-    public static final String PARAM_MAJORATION = "taux_majoration_hs_weekend";
-    /** Most overtime hours one weekend day can count. */
-    public static final String PARAM_DAILY_CAP = "plafond_hs_jour";
-    static final BigDecimal DEFAULT_DAILY_CAP = BigDecimal.valueOf(8);
+    /** Majoration of weekend overtime, in % — default of every weekend day (engine parameter). */
+    public static final String PARAM_MAJORATION = OvertimeSettingsService.PARAM_MAJORATION;
+    /** Most overtime hours one weekend day can count — country level (engine parameter). */
+    public static final String PARAM_DAILY_CAP = OvertimeSettingsService.PARAM_DAILY_CAP;
     static final BigDecimal FALLBACK_HOURS_PER_WEEK = BigDecimal.valueOf(40);
     static final long FALLBACK_WORKING_DAYS = 22;
 
     /** Engine variables this service defines — every one always set, 0 when not applicable. */
     public static final List<String> VARIABLES = List.of(
             "SALAIRE_MENSUEL", "HEURES_MENSUELLES", "TAUX_HORAIRE", "TAUX_JOURNALIER",
-            "TAUX_MAJORATION_HS", "HS_WEEKEND_HEURES", "ABS_NON_PAYEES_JOURS", "JOURS_NON_EMPLOYES",
-            "AUTORISATION_HEURES_DEDUITES", "PRIMES_MOIS", "AVANCES_MOIS");
+            "TAUX_MAJORATION_HS", "HS_WEEKEND_HEURES", "HS_WEEKEND_MONTANT", "ABS_NON_PAYEES_JOURS",
+            "JOURS_NON_EMPLOYES", "AUTORISATION_HEURES_DEDUITES", "PRIMES_MOIS", "AVANCES_MOIS");
 
     private static final Set<DayOfWeek> DEFAULT_WEEKEND = EnumSet.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY);
 
@@ -83,19 +83,22 @@ public class PayrollVariableInputsService {
     private final SalaryAdvanceInstallmentRepository installmentRepo;
     private final FxEntryConversionService fx;
     private final PayrollLeaveSettingsService leaveSettings;
+    private final OvertimeSettingsService overtimeSettings;
 
     public PayrollVariableInputsService(HrPayrollInputsClient hrClient,
                                         TimesheetHoursClient timesheetClient,
                                         EmployeePayrollBonusRepository bonusRepo,
                                         SalaryAdvanceInstallmentRepository installmentRepo,
                                         FxEntryConversionService fx,
-                                        PayrollLeaveSettingsService leaveSettings) {
+                                        PayrollLeaveSettingsService leaveSettings,
+                                        OvertimeSettingsService overtimeSettings) {
         this.hrClient = hrClient;
         this.timesheetClient = timesheetClient;
         this.bonusRepo = bonusRepo;
         this.installmentRepo = installmentRepo;
         this.fx = fx;
         this.leaveSettings = leaveSettings;
+        this.overtimeSettings = overtimeSettings;
     }
 
     /**
@@ -140,17 +143,17 @@ public class PayrollVariableInputsService {
         BigDecimal dailyRate = gross.divide(BigDecimal.valueOf(workingDaysInMonth), 6, RoundingMode.HALF_UP);
 
         // ── Overtime (timesheet, weekend days of the country of work) ────────────────────────
-        BigDecimal majoration = decimalParam(params, PARAM_MAJORATION);
-        if (majoration == null) {
-            warnings.add("Majoration des heures supplémentaires non configurée (paramètre "
-                    + PARAM_MAJORATION + " du jeu de paramètres) : heures payées sans majoration.");
-        }
-        BigDecimal cap = decimalParam(params, PARAM_DAILY_CAP);
-        if (cap == null || cap.signum() <= 0) cap = DEFAULT_DAILY_CAP;
+        // V43: majoration per weekend day (default = engine parameter), daily cap per
+        // employee → role → country parameter → 8 h. Each day is priced at its own majoration.
+        OvertimeSettingsService.OvertimeRules rules = overtimeSettings.rulesFor(
+                paysId, hr != null ? hr.roleId() : null, employeeId, params);
+        BigDecimal cap = rules.dailyCap();
 
         List<PayrollVariableInputs.OvertimeDay> otDays = new ArrayList<>();
         BigDecimal paidHours = BigDecimal.ZERO;
         BigDecimal cappedOut = BigDecimal.ZERO;
+        BigDecimal otAmountRaw = BigDecimal.ZERO;
+        boolean majorationMissing = false;
         boolean timesheetRead = false;
         if (!timesheetClient.isConfigured()) {
             warnings.add("Timesheet non configurée (TIMESHEET_API_BASE_URL) : heures supplémentaires non lues.");
@@ -167,17 +170,37 @@ public class PayrollVariableInputsService {
                     if (exitDate != null && d.date().isAfter(exitDate)) continue;
                     BigDecimal paid = d.hours().min(cap);
                     boolean capped = d.hours().compareTo(cap) > 0;
+                    BigDecimal pct = rules.pctFor(d.date().getDayOfWeek());
+                    if (pct == null && paid.signum() > 0) majorationMissing = true;
+                    BigDecimal factor = BigDecimal.ONE.add((pct != null ? pct : BigDecimal.ZERO)
+                            .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP));
+                    BigDecimal dayAmount = paid.multiply(hourlyRate).multiply(factor);
                     otDays.add(new PayrollVariableInputs.OvertimeDay(d.date(), d.date().getDayOfWeek().name(),
-                            d.hours(), paid, capped));
+                            d.hours(), paid, capped, pct, dayAmount.setScale(2, RoundingMode.HALF_UP)));
                     paidHours = paidHours.add(paid);
+                    otAmountRaw = otAmountRaw.add(dayAmount);
                     if (capped) cappedOut = cappedOut.add(d.hours().subtract(cap));
                 }
             }
         }
-        BigDecimal majorationFactor = BigDecimal.ONE.add(
-                (majoration != null ? majoration : BigDecimal.ZERO).divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP));
-        BigDecimal otAmount = paidHours.multiply(hourlyRate).multiply(majorationFactor).setScale(2, RoundingMode.HALF_UP);
-        var overtime = new PayrollVariableInputs.Overtime(majoration, cap, otDays, paidHours, cappedOut, otAmount);
+        if (majorationMissing) {
+            warnings.add("Majoration des heures supplémentaires non configurée (par jour dans « Absences, HS et "
+                    + "période de paie », ou paramètre TAUX_MAJORATION_HS_WEEKEND de « Taux et barèmes ») : "
+                    + "heures payées sans majoration.");
+        }
+        BigDecimal otAmount = otAmountRaw.setScale(2, RoundingMode.HALF_UP);
+        // Hours-weighted average majoration: the summary figure, and what keeps the V41 formula
+        // (paid hours × rate × (1 + TAUX_MAJORATION_HS)) exact where V43 was not applied.
+        BigDecimal avgPct = null;
+        if (paidHours.signum() > 0 && hourlyRate.signum() > 0) {
+            avgPct = otAmountRaw.divide(paidHours.multiply(hourlyRate), 10, RoundingMode.HALF_UP)
+                    .subtract(BigDecimal.ONE).multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP);
+        } else if (rules.defaultPct() != null) {
+            avgPct = rules.defaultPct();
+        }
+        if (otDays.isEmpty() && rules.defaultPct() == null && rules.dayPct().isEmpty()) avgPct = null;
+        var overtime = new PayrollVariableInputs.Overtime(avgPct, cap, rules.capSource().name(),
+                otDays, paidHours, cappedOut, otAmount);
 
         // ── Absences ────────────────────────────────────────────────────────────────────────
         List<PayrollVariableInputs.AbsenceItem> absItems = new ArrayList<>();
@@ -260,6 +283,8 @@ public class PayrollVariableInputsService {
         ctx.putVariable("TAUX_JOURNALIER", in.dailyRate());
         ctx.putVariable("TAUX_MAJORATION_HS", in.overtime().majorationPct() != null ? in.overtime().majorationPct() : BigDecimal.ZERO);
         ctx.putVariable("HS_WEEKEND_HEURES", in.overtime().paidHours());
+        // V43: the amount already priced day by day (each weekend day at its own majoration).
+        ctx.putVariable("HS_WEEKEND_MONTANT", in.overtime().amount());
         ctx.putVariable("ABS_NON_PAYEES_JOURS", in.absences().unpaidDays());
         ctx.putVariable("JOURS_NON_EMPLOYES", BigDecimal.valueOf(in.nonEmployedDays()));
         ctx.putVariable("AUTORISATION_HEURES_DEDUITES", in.autorisations().deductedHours());
@@ -304,14 +329,4 @@ public class PayrollVariableInputsService {
         }
     }
 
-    private static BigDecimal decimalParam(Map<String, Object> params, String key) {
-        if (params == null) return null;
-        Object raw = params.get(key);
-        if (raw == null) return null;
-        try {
-            return raw instanceof BigDecimal b ? b : new BigDecimal(raw.toString());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
 }

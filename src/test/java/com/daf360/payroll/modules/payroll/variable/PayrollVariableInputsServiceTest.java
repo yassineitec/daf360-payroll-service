@@ -3,6 +3,7 @@ package com.daf360.payroll.modules.payroll.variable;
 import com.daf360.payroll.modules.employeeconfig.repository.EmployeePayrollBonusRepository;
 import com.daf360.payroll.modules.payroll.calculator.ExecutionContext;
 import com.daf360.payroll.modules.payroll.dto.RubriqueResultItem;
+import com.daf360.payroll.modules.payroll.leavesettings.OvertimeSettingsService;
 import com.daf360.payroll.modules.payroll.leavesettings.PayrollLeaveSettingsService;
 import com.daf360.payroll.modules.payroll.orchestrator.SystemVariableAggregator;
 import com.daf360.payroll.modules.ref.service.FxEntryConversionService;
@@ -13,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +40,27 @@ class PayrollVariableInputsServiceTest {
     @Mock private SalaryAdvanceInstallmentRepository installmentRepo;
     @Mock private FxEntryConversionService fx;
     @Mock private PayrollLeaveSettingsService leaveSettings;
+    @Mock private OvertimeSettingsService overtimeSettings;
+
+    private PayrollVariableInputsService service() {
+        return new PayrollVariableInputsService(hrClient, timesheetClient, bonusRepo, installmentRepo, fx,
+                leaveSettings, overtimeSettings);
+    }
+
+    private static OvertimeSettingsService.OvertimeRules rules(Map<DayOfWeek, BigDecimal> perDay, String defaultPct,
+                                                               String cap, OvertimeSettingsService.CapSource source) {
+        return new OvertimeSettingsService.OvertimeRules(perDay, defaultPct == null ? null : new BigDecimal(defaultPct),
+                new BigDecimal(cap), source);
+    }
+
+    private static HrPayrollInputsClient.HrPayrollInputs hr48(LocalDate from, LocalDate to,
+                                                              List<HrPayrollInputsClient.AbsenceLine> absences,
+                                                              List<HrPayrollInputsClient.BalanceLine> balances) {
+        return new HrPayrollInputsClient.HrPayrollInputs(
+                1L, 178L, 2026, 11, from, to, List.of("SATURDAY", "SUNDAY"), List.of(), 20,
+                LocalDate.of(2020, 1, 1), null, 20, "R48", BigDecimal.valueOf(48), 6,
+                absences, 300, 240, balances, 3L, "Collaborateur");
+    }
 
     private static final LocalDate SAT = LocalDate.of(2026, 11, 7);
     private static final LocalDate SUN = LocalDate.of(2026, 11, 8);
@@ -51,26 +74,24 @@ class PayrollVariableInputsServiceTest {
         when(leaveSettings.periodFor(178L, 2026, 11))
                 .thenReturn(new PayrollLeaveSettingsService.PayPeriod(FROM, TO, 21, 20));
         when(leaveSettings.deductibleCodes(178L)).thenReturn(Set.of("SANS_SOLDE"));
-        when(hrClient.fetch(1L, 2026, 11, FROM, TO)).thenReturn(Optional.of(new HrPayrollInputsClient.HrPayrollInputs(
-                1L, 178L, 2026, 11, FROM, TO, List.of("SATURDAY", "SUNDAY"), List.of(), 20,
-                LocalDate.of(2020, 1, 1), null, 20, "R48", BigDecimal.valueOf(48), 6,
+        when(hrClient.fetch(1L, 2026, 11, FROM, TO)).thenReturn(Optional.of(hr48(FROM, TO,
                 List.of(
                         new HrPayrollInputsClient.AbsenceLine("SANS_SOLDE", "Congé sans solde", "Unpaid", "MULTIPLE_DAYS",
                                 LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 3), BigDecimal.valueOf(2), null),
                         new HrPayrollInputsClient.AbsenceLine("CONGE", "Congé", "Leave", "FULL_DAY",
                                 LocalDate.of(2026, 11, 4), LocalDate.of(2026, 11, 4), BigDecimal.ONE, "CONGE")),
-                300, 240,
                 List.of(new HrPayrollInputsClient.BalanceLine("CONGE", BigDecimal.valueOf(15), BigDecimal.valueOf(14),
                         BigDecimal.ONE, BigDecimal.valueOf(12))))));
+        Map<String, Object> params = Map.of(PayrollVariableInputsService.PARAM_MAJORATION, 75);
+        when(overtimeSettings.rulesFor(178L, 3L, 1L, params))
+                .thenReturn(rules(Map.of(), "75", "8", OvertimeSettingsService.CapSource.DEFAULT));
         when(timesheetClient.isConfigured()).thenReturn(true);
         when(timesheetClient.approvedDailyHours(any(), any(), any())).thenReturn(Optional.of(List.of(
                 new TimesheetHoursClient.DailyHours(SAT, BigDecimal.valueOf(10)),   // capped to 8
                 new TimesheetHoursClient.DailyHours(SUN, BigDecimal.valueOf(3)),
                 new TimesheetHoursClient.DailyHours(MON, BigDecimal.valueOf(9))))); // weekday: not overtime
 
-        var service = new PayrollVariableInputsService(hrClient, timesheetClient, bonusRepo, installmentRepo, fx, leaveSettings);
-        PayrollVariableInputs in = service.gather(1L, 178L, 2026, 11, BigDecimal.valueOf(2080),
-                Map.of(PayrollVariableInputsService.PARAM_MAJORATION, 75), "TND");
+        PayrollVariableInputs in = service().gather(1L, 178L, 2026, 11, BigDecimal.valueOf(2080), params, "TND");
 
         verify(timesheetClient).approvedDailyHours(1L, FROM, TO);
         assertThat(in.periodFrom()).isEqualTo(FROM);
@@ -97,20 +118,52 @@ class PayrollVariableInputsServiceTest {
     }
 
     @Test
-    void missingMajorationIsReportedNotInvented() {
+    void missingSourcesAreReportedNotInvented() {
         LocalDate from = LocalDate.of(2026, 11, 1), to = LocalDate.of(2026, 11, 30);
         when(leaveSettings.periodFor(178L, 2026, 11))
                 .thenReturn(new PayrollLeaveSettingsService.PayPeriod(from, to, 1, null));
         when(hrClient.fetch(1L, 2026, 11, from, to)).thenReturn(Optional.empty());
+        when(overtimeSettings.rulesFor(178L, null, 1L, Map.of()))
+                .thenReturn(rules(Map.of(), null, "8", OvertimeSettingsService.CapSource.DEFAULT));
         when(timesheetClient.isConfigured()).thenReturn(false);
 
-        var service = new PayrollVariableInputsService(hrClient, timesheetClient, bonusRepo, installmentRepo, fx, leaveSettings);
-        PayrollVariableInputs in = service.gather(1L, 178L, 2026, 11, BigDecimal.valueOf(2080), Map.of(), "TND");
+        PayrollVariableInputs in = service().gather(1L, 178L, 2026, 11, BigDecimal.valueOf(2080), Map.of(), "TND");
 
         assertThat(in.overtime().majorationPct()).isNull();
         assertThat(in.hrRead()).isFalse();
         assertThat(in.timesheetRead()).isFalse();
-        assertThat(in.warnings()).hasSize(4); // RH, régime, majoration, timesheet
+        // RH, régime, timesheet — no majoration warning without overtime hours to pay.
+        assertThat(in.warnings()).hasSize(3);
+    }
+
+    @Test
+    void eachWeekendDayIsPricedAtItsOwnMajorationWithTheEmployeeCap() {
+        LocalDate from = LocalDate.of(2026, 11, 1), to = LocalDate.of(2026, 11, 30);
+        when(leaveSettings.periodFor(178L, 2026, 11))
+                .thenReturn(new PayrollLeaveSettingsService.PayPeriod(from, to, 1, null));
+        when(hrClient.fetch(1L, 2026, 11, from, to)).thenReturn(Optional.of(hr48(from, to, List.of(), List.of())));
+        // Saturday 50 %, Sunday 100 %, employee cap 6 h.
+        when(overtimeSettings.rulesFor(178L, 3L, 1L, Map.of())).thenReturn(rules(
+                Map.of(DayOfWeek.SATURDAY, new BigDecimal("50"), DayOfWeek.SUNDAY, new BigDecimal("100")),
+                "75", "6", OvertimeSettingsService.CapSource.EMPLOYEE));
+        when(timesheetClient.isConfigured()).thenReturn(true);
+        when(timesheetClient.approvedDailyHours(any(), any(), any())).thenReturn(Optional.of(List.of(
+                new TimesheetHoursClient.DailyHours(SAT, BigDecimal.valueOf(10)),   // capped to 6
+                new TimesheetHoursClient.DailyHours(SUN, BigDecimal.valueOf(3)))));
+
+        PayrollVariableInputs in = service().gather(1L, 178L, 2026, 11, BigDecimal.valueOf(2080), Map.of(), "TND");
+
+        // 6 × 10 × 1.5 = 90 ; 3 × 10 × 2 = 60 → 150. Weighted average: 150 / (9 × 10) − 1 = 66.67 %.
+        assertThat(in.overtime().dailyCapHours()).isEqualByComparingTo("6");
+        assertThat(in.overtime().capSource()).isEqualTo("EMPLOYEE");
+        assertThat(in.overtime().paidHours()).isEqualByComparingTo("9");
+        assertThat(in.overtime().cappedOutHours()).isEqualByComparingTo("4");
+        assertThat(in.overtime().amount()).isEqualByComparingTo("150.00");
+        assertThat(in.overtime().days()).extracting(PayrollVariableInputs.OvertimeDay::majorationPct)
+                .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
+                .containsExactly(new BigDecimal("50"), new BigDecimal("100"));
+        assertThat(in.overtime().majorationPct()).isEqualByComparingTo("66.6667");
+        assertThat(in.warnings()).isEmpty();
     }
 
     @Test

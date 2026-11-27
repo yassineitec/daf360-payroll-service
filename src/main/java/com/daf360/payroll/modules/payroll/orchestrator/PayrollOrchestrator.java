@@ -429,7 +429,7 @@ public class PayrollOrchestrator {
     }
 
     /** {@value #BASE_SALARY_RUBRIQUE}, sinon le premier montant fixe de strate 1 ({@code rubriques} est trié par ordre). */
-    static Optional<PayrollRubriqueDef> baseSalaryRubrique(List<PayrollRubriqueDef> rubriques) {
+    public static Optional<PayrollRubriqueDef> baseSalaryRubrique(List<PayrollRubriqueDef> rubriques) {
         List<PayrollRubriqueDef> fixedBase = rubriques.stream()
             .filter(r -> r.getStrate() == 1 && "MONTANT_FIXE".equals(r.getModeCalcul()) && r.getParamKeyTaux() != null)
             .toList();

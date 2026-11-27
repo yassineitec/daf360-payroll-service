@@ -63,9 +63,14 @@ public record PayrollVariableInputs(
 
     /** Weekend overtime from APPROVED timesheet hours, capped per day. */
     public record Overtime(
-            /** Parameter taux_majoration_hs_weekend of the active parameter set, in % (null = not configured). */
+            /**
+             * Majoration in % — since V43 the hours-weighted average of the days' own majorations
+             * (each day carries its own in {@link OvertimeDay#majorationPct}). Null = not configured.
+             */
             BigDecimal majorationPct,
             BigDecimal dailyCapHours,
+            /** Where the cap came from: EMPLOYEE, ROLE, COUNTRY or DEFAULT (V43; null before). */
+            String capSource,
             List<OvertimeDay> days,
             /** Hours paid (after the daily cap). */
             BigDecimal paidHours,
@@ -75,8 +80,9 @@ public record PayrollVariableInputs(
             BigDecimal amount
     ) {}
 
+    /** One weekend day; {@code majorationPct} / {@code amount} are absent on snapshots before V43. */
     public record OvertimeDay(LocalDate date, String dayOfWeek, BigDecimal workedHours,
-                              BigDecimal paidHours, boolean capped) {}
+                              BigDecimal paidHours, boolean capped, BigDecimal majorationPct, BigDecimal amount) {}
 
     public record Absences(
             List<AbsenceItem> items,
